@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from mimetypes import guess_type
+from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
@@ -12,6 +15,26 @@ from .config import PortalConfig
 
 if TYPE_CHECKING:
     from ..core.engine import Glados
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+API_INDEX = {
+    "ok": True,
+    "service": "glados-portal",
+    "endpoints": {
+        "GET /api": "This catalog",
+        "GET /api/status": "Core, autonomy, vision, speaking state",
+        "GET /api/vision": "Latest camera description",
+        "GET /api/events": "Dialog and vision events (?since=unix)",
+        "POST /api/chat": "Send a text message {text}",
+        "GET /health": "Liveness probe",
+    },
+}
+
+
+def _pins_match(left: str, right: str) -> bool:
+    if len(left) != len(right):
+        return False
+    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
 
 
 def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPServer:
@@ -27,23 +50,35 @@ def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPSe
                 or self.headers.get("x-glados-pin")
                 or parse_qs(urlparse(self.path).query).get("pin", [""])[0]
             )
-            return hmac_compare(provided, config.pin)
+            return _pins_match(provided, config.pin)
 
         def _cors(self) -> None:
             origin = self.headers.get("Origin", "*")
             self.send_header("Access-Control-Allow-Origin", origin or "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-GLaDOS-Pin")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-GLaDOS-Pin, ngrok-skip-browser-warning")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Credentials", "true")
 
-        def _json(self, payload: dict[str, Any], status: int = 200) -> None:
-            body = json.dumps(payload).encode("utf-8")
+        def _send(self, body: bytes, content_type: str, status: int = 200) -> None:
             self.send_response(status)
             self._cors()
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _json(self, payload: dict[str, Any], status: int = 200) -> None:
+            self._send(json.dumps(payload).encode("utf-8"), "application/json", status)
+
+        def _static(self, relative: str) -> bool:
+            target = (STATIC_DIR / relative.lstrip("/")).resolve()
+            if STATIC_DIR not in target.parents and target != STATIC_DIR:
+                return False
+            if not target.is_file():
+                return False
+            content_type = guess_type(target.name)[0] or "application/octet-stream"
+            self._send(target.read_bytes(), content_type)
+            return True
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
@@ -52,11 +87,27 @@ def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPSe
 
         def do_GET(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path in {"/", "/health"}:
+            if path in {"/", "/index.html"}:
+                if self._static("index.html"):
+                    return
+                self._json({"ok": False, "error": "ui missing"}, 500)
+                return
+            if path == "/health":
                 self._json({"ok": True, "service": "glados-portal"})
+                return
+            if path.startswith("/static/"):
+                if self._static(path.removeprefix("/static/")):
+                    return
+                self._json({"ok": False, "error": "not found"}, 404)
+                return
+            if not path.startswith("/api"):
+                self._json({"ok": False, "error": "not found"}, 404)
                 return
             if not self._pin_ok():
                 self._json({"ok": False, "error": "invalid pin"}, 401)
+                return
+            if path == "/api":
+                self._json(API_INDEX)
                 return
             if path == "/api/status":
                 vision = None
@@ -118,6 +169,9 @@ def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPSe
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
+            if not path.startswith("/api"):
+                self._json({"ok": False, "error": "not found"}, 404)
+                return
             if not self._pin_ok():
                 self._json({"ok": False, "error": "invalid pin"}, 401)
                 return
@@ -138,15 +192,8 @@ def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPSe
                 return
             self._json({"ok": False, "error": "not found"}, 404)
 
-    def hmac_compare(left: str, right: str) -> bool:
-        import hmac
-
-        if len(left) != len(right):
-            return False
-        return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
-
     server = ThreadingHTTPServer((config.host, config.port), PortalHandler)
     thread = threading.Thread(target=server.serve_forever, name="PortalHTTP", daemon=True)
     thread.start()
-    logger.success(f"Portal listening on http://{config.host}:{config.port} (PIN required)")
+    logger.success(f"Portal UI + API listening on http://{config.host}:{config.port}")
     return server

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GLaDOS Portal</title>
+  <style>
+    :root {
+      --amber: #ffb000;
+      --ink: #14110c;
+      --panel: #1d1810;
+      --dim: #8a7344;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(circle at top, #2a2114 0%, var(--ink) 55%);
+      color: var(--amber);
+      font-family: "Lucida Console", Consolas, monospace;
+    }
+    body { padding: 24px; }
+    .shell { max-width: 960px; margin: 0 auto; }
+    h1 { letter-spacing: 0.18em; font-size: 1.35rem; margin: 0 0 8px; }
+    .sub { color: var(--dim); margin-bottom: 20px; }
+    label { display: block; font-size: 0.75rem; letter-spacing: 0.12em; margin: 16px 0 6px; color: var(--dim); }
+    input, button {
+      font: inherit;
+      color: var(--amber);
+      background: var(--panel);
+      border: 1px solid #6b5424;
+    }
+    input { width: 100%; padding: 10px 12px; }
+    button { padding: 10px 16px; cursor: pointer; letter-spacing: 0.12em; text-transform: uppercase; }
+    button:hover { background: #2b2214; }
+    .panel { border: 1px solid #6b5424; background: rgba(20, 17, 12, 0.9); padding: 24px; }
+    .row { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+    .grid { display: grid; gap: 16px; }
+    @media (min-width: 800px) { .grid { grid-template-columns: 1fr 1.2fr; } }
+    .feed, .scene {
+      border: 1px solid #6b5424;
+      padding: 12px;
+      background: #100e0a;
+      white-space: pre-wrap;
+    }
+    .feed { min-height: 280px; max-height: 420px; overflow: auto; }
+    .scene { color: #86efac; min-height: 140px; }
+    .meta { color: var(--dim); font-size: 0.8rem; margin-bottom: 8px; }
+    .you { color: #7dd3fc; }
+    .glados { color: var(--amber); }
+    .vision { color: #86efac; }
+    .error { color: #f87171; margin-top: 12px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <form id="gate" class="panel">
+      <h1>APERTURE REMOTE ACCESS</h1>
+      <p class="sub">This host is the facility UI. API lives at <code>/api</code>. Enter PIN 9119.</p>
+      <label>PIN</label>
+      <input id="pin" type="password" value="9119" autocomplete="current-password" />
+      <div class="row"><button type="submit">Unlock</button></div>
+      <p id="gate-error" class="error"></p>
+    </form>
+
+    <section id="console" class="panel hidden">
+      <h1>GLaDOS CORE</h1>
+      <p class="sub" id="status-line">Linked to this host. API: /api</p>
+      <div class="grid">
+        <div>
+          <label>Vision</label>
+          <div class="meta" id="scene-meta">Waiting for camera…</div>
+          <div class="scene" id="scene">No vision snapshot yet.</div>
+        </div>
+        <div>
+          <label>Dialog</label>
+          <div class="feed" id="feed"></div>
+        </div>
+      </div>
+      <form id="chat">
+        <label>Message</label>
+        <input id="text" placeholder="Type a test subject inquiry…" />
+        <div class="row">
+          <button type="submit">Send</button>
+          <button type="button" id="lock">Lock</button>
+        </div>
+      </form>
+      <p id="console-error" class="error"></p>
+    </section>
+  </main>
+  <script>
+    const pinInput = document.getElementById("pin");
+    const gate = document.getElementById("gate");
+    const consoleEl = document.getElementById("console");
+    const feed = document.getElementById("feed");
+    const scene = document.getElementById("scene");
+    const sceneMeta = document.getElementById("scene-meta");
+    const statusLine = document.getElementById("status-line");
+    const textInput = document.getElementById("text");
+    const gateError = document.getElementById("gate-error");
+    const consoleError = document.getElementById("console-error");
+    let since = 0;
+    let timer = null;
+
+    function headers() {
+      return {
+        "Content-Type": "application/json",
+        "X-GLaDOS-Pin": pinInput.value,
+        "ngrok-skip-browser-warning": "1",
+      };
+    }
+
+    async function api(path, init = {}) {
+      const response = await fetch(path, { ...init, headers: { ...headers(), ...(init.headers || {}) } });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function addEvents(events) {
+      for (const event of events) {
+        const role = event.source === "tts" ? "glados" : event.source === "vision" ? "vision" : "you";
+        const label = role === "glados" ? "GLaDOS" : role === "vision" ? "Vision" : "You";
+        const line = document.createElement("div");
+        line.className = role;
+        line.textContent = `${label}: ${event.message}`;
+        feed.appendChild(line);
+        since = event.timestamp;
+      }
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    async function tick() {
+      try {
+        const status = await api("/api/status");
+        const feedData = await api(`/api/events?since=${since}`);
+        statusLine.textContent = `Model ${status.model} · Autonomy ${status.autonomy ? "ON" : "OFF"} · Vision ${status.vision ? "ON" : "OFF"} · Speaking ${status.speaking ? "YES" : "NO"}`;
+        if (status.scene) {
+          scene.textContent = status.scene;
+          const when = status.scene_updated_at ? new Date(status.scene_updated_at * 1000).toLocaleTimeString() : "now";
+          const score = status.scene_change_score == null ? "—" : Number(status.scene_change_score).toFixed(3);
+          sceneMeta.textContent = `${when} · change ${score}`;
+        }
+        if (feedData.events?.length) addEvents(feedData.events);
+        consoleError.textContent = "";
+      } catch (err) {
+        consoleError.textContent = err.message || "Core unreachable";
+      }
+    }
+
+    gate.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      gateError.textContent = "";
+      try {
+        await api("/api/status");
+        localStorage.setItem("glados-pin", pinInput.value);
+        gate.classList.add("hidden");
+        consoleEl.classList.remove("hidden");
+        await tick();
+        timer = setInterval(tick, 2000);
+      } catch (err) {
+        gateError.textContent = err.message || "Access denied";
+      }
+    });
+
+    document.getElementById("chat").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = textInput.value.trim();
+      if (!text) return;
+      textInput.value = "";
+      try {
+        await api("/api/chat", { method: "POST", body: JSON.stringify({ text }) });
+      } catch (err) {
+        consoleError.textContent = err.message || "Send failed";
+      }
+    });
+
+    document.getElementById("lock").addEventListener("click", () => {
+      if (timer) clearInterval(timer);
+      consoleEl.classList.add("hidden");
+      gate.classList.remove("hidden");
+    });
+
+    const saved = localStorage.getItem("glados-pin");
+    if (saved) pinInput.value = saved;
+  </script>
+</body>
+</html>
