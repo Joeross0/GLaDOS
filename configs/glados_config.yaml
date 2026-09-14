@@ -1,5 +1,5 @@
 Glados:
-  llm_model: "llama3.2"
+  llm_model: "dolphin-llama3:8b"
   completion_url: "http://localhost:11434/api/chat"
   api_key: null  # Add your API key here if needed!
   interruptible: false
