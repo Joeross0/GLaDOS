@@ -103,7 +103,7 @@ class VisionProcessor:
                 description = self._get_description(frame, prompt=VISION_DEFAULT_PROMPT, max_tokens=self.config.max_tokens)
 
                 if description:
-                    self.vision_state.update(description)
+                    self.vision_state.update(description, change_score=change_score)
                     logger.success("Vision snapshot updated: {}", description)
                     self._publish_update(description, change_score)
                     self._last_description = description

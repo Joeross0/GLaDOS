@@ -68,6 +68,8 @@ HeaderClock {
 #system_title.hidden,
 #status_panel.hidden,
 #status_title.hidden,
+#vision_panel.hidden,
+#vision_title.hidden,
 #autonomy_panel.hidden,
 #autonomy_title.hidden,
 #mcp_panel.hidden,
@@ -130,6 +132,7 @@ HeaderClock {
 #dialog_title,
 #system_title,
 #status_title,
+#vision_title,
 #autonomy_title,
 #queue_title,
 #mcp_title {
@@ -150,6 +153,7 @@ HeaderClock {
 }
 
 #status_panel,
+#vision_panel,
 #autonomy_panel,
 #queue_panel,
 #mcp_panel {
@@ -159,6 +163,10 @@ HeaderClock {
 }
 
 #status_panel {
+    height: 10;
+}
+
+#vision_panel {
     height: 10;
 }
 

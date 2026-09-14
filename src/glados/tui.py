@@ -18,6 +18,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
+from rich.markup import escape
 from textual.widgets import Footer, Header, Input, Label, OptionList, RichLog, Static
 from textual.worker import Worker, WorkerState
 
@@ -299,11 +300,14 @@ class DialogLog(RichLog):
             return DialogLine(role="You", content=event.message)
         if event.source == "tts" and event.kind == "play":
             return DialogLine(role="GLaDOS", content=event.message)
+        if event.source == "vision" and event.kind == "update":
+            return DialogLine(role="Vision", content=event.message)
         return None
 
     def _write_dialog(self, line: DialogLine) -> None:
-        color = "cyan" if line.role == "You" else "yellow"
-        self.write(f"[bold {color}]{line.role}[/]: {line.content}")
+        colors = {"You": "cyan", "GLaDOS": "yellow", "Vision": "green"}
+        color = colors.get(line.role, "white")
+        self.write(f"[bold {color}]{line.role}[/]: {escape(line.content)}")
 
 
 class StatusPanel(Static):
@@ -346,6 +350,29 @@ class StatusPanel(Static):
             f"Microphone: {vad_indicator} {rms_db:5.1f} dB",
         ]
         self.update("\n".join(lines))
+
+
+class VisionPanel(Static):
+    can_focus = False
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.markup = True
+
+    def render_vision(self, app: "GladosUI") -> None:
+        engine = app.glados_engine_instance
+        if not engine or engine.vision_state is None:
+            self.update("Vision: disabled")
+            return
+        description, change_score, updated_at = engine.vision_state.details()
+        if not description:
+            self.update("Waiting for first camera snapshot...")
+            return
+        updated = "—"
+        if updated_at:
+            updated = datetime.fromtimestamp(updated_at).strftime("%H:%M:%S")
+        score = f"{change_score:.3f}" if change_score is not None else "—"
+        self.update(f"[dim]{updated}  change {score}[/]\n{escape(description)}")
 
 
 class QueuePanel(Static):
@@ -933,6 +960,7 @@ class GladosUI(App[None]):
     _status_panel: StatusPanel | None = None
     _queue_panel: QueuePanel | None = None
     _autonomy_panel: AutonomyPanel | None = None
+    _vision_panel: VisionPanel | None = None
     _mcp_panel: MCPPanel | None = None
     _queue_metrics: dict[str, dict[str, float | int | None]]
     _config_paths: list[Path]
@@ -999,6 +1027,8 @@ class GladosUI(App[None]):
                 with Vertical(id="right_panel"):
                     yield Label("[u]S[/u]tatus", id="status_title")
                     yield StatusPanel(id="status_panel")
+                    yield Label("[u]V[/u]ision", id="vision_title")
+                    yield VisionPanel(id="vision_panel")
                     yield Label("[u]A[/u]utonomy", id="autonomy_title")
                     yield AutonomyPanel(id="autonomy_panel")
                     yield Label("Q[u]u[/u]eues", id="queue_title")
@@ -1203,6 +1233,10 @@ class GladosUI(App[None]):
             self._toggle_panel("status_panel", "status_title")
             event.stop()
             return
+        if key == "ctrl+v":
+            self._toggle_panel("vision_panel", "vision_title")
+            event.stop()
+            return
         if key == "ctrl+a":
             self._toggle_panel("autonomy_panel", "autonomy_title")
             event.stop()
@@ -1235,6 +1269,8 @@ class GladosUI(App[None]):
             self._queue_panel.render_queue(self)
         if self._autonomy_panel:
             self._autonomy_panel.render_autonomy(self)
+        if self._vision_panel:
+            self._vision_panel.render_vision(self)
         if self._mcp_panel:
             self._mcp_panel.render_mcp(self)
 
@@ -1260,6 +1296,7 @@ class GladosUI(App[None]):
             and self._status_panel is not None
             and self._queue_panel is not None
             and self._autonomy_panel is not None
+            and self._vision_panel is not None
             and self._mcp_panel is not None
         ):
             return True
@@ -1268,6 +1305,7 @@ class GladosUI(App[None]):
             self._status_panel = self.query_one("#status_panel", StatusPanel)
             self._queue_panel = self.query_one("#queue_panel", QueuePanel)
             self._autonomy_panel = self.query_one("#autonomy_panel", AutonomyPanel)
+            self._vision_panel = self.query_one("#vision_panel", VisionPanel)
             self._mcp_panel = self.query_one("#mcp_panel", MCPPanel)
             return True
         except NoMatches:
@@ -1328,6 +1366,7 @@ class GladosUI(App[None]):
             ("dialog_log", "dialog_title"),
             ("log_area", "system_title"),
             ("status_panel", "status_title"),
+            ("vision_panel", "vision_title"),
             ("autonomy_panel", "autonomy_title"),
             ("queue_panel", "queue_title"),
             ("mcp_panel", "mcp_title"),
