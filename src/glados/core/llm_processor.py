@@ -714,7 +714,9 @@ class LanguageModelProcessor:
                         if fallback_url != request_urls[0]:
                             request_urls.append(fallback_url)
 
-                    for attempt, request_url in enumerate(request_urls):
+                    attempt = 0
+                    while attempt < len(request_urls):
+                        request_url = request_urls[attempt]
                         if request_url.endswith("/v1/chat/completions"):
                             data["messages"] = self._sanitize_messages_for_openai(base_messages)
                         elif self._ollama_mode:
@@ -785,11 +787,25 @@ class LanguageModelProcessor:
                             if response is not None:
                                 response_text = response.text.strip()
                             http_error_detail = (status_code, response_text or str(e))
+                            if (
+                                status_code == 400
+                                and "does not support tools" in response_text.lower()
+                                and data.get("tools")
+                            ):
+                                logger.warning(
+                                    "LLM Processor: {} does not support tools; retrying without them.",
+                                    self.model_name,
+                                )
+                                data.pop("tools", None)
+                                tools = []
+                                tool_names = set()
+                                continue
                             if attempt < len(request_urls) - 1:
                                 logger.warning(
                                     "LLM Processor: Retrying with fallback endpoint {}",
                                     request_urls[attempt + 1],
                                 )
+                                attempt += 1
                                 continue
                             raise
 
