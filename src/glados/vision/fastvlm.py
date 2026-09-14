@@ -229,6 +229,9 @@ class FastVLM:
         session_opts = ort.SessionOptions()
         session_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         session_opts.enable_mem_pattern = True
+        fallback_opts = ort.SessionOptions()
+        fallback_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+        fallback_opts.enable_mem_pattern = False
 
         if vision_encoder_path is None:
             vision_encoder_path = (
@@ -254,25 +257,13 @@ class FastVLM:
         decoder_path = Path(decoder_path)
 
         logger.debug("Loading vision encoder...")
-        self.vision_encoder = ort.InferenceSession(
-            str(vision_encoder_path),
-            sess_options=session_opts,
-            providers=self._providers,
-        )
+        self.vision_encoder = self._load_session(vision_encoder_path, session_opts, fallback_opts)
 
         logger.debug("Loading embed tokens...")
-        self.embed_tokens = ort.InferenceSession(
-            str(embed_tokens_path),
-            sess_options=session_opts,
-            providers=self._providers,
-        )
+        self.embed_tokens = self._load_session(embed_tokens_path, session_opts, fallback_opts)
 
         logger.debug("Loading decoder...")
-        self.decoder = ort.InferenceSession(
-            str(decoder_path),
-            sess_options=session_opts,
-            providers=self._providers,
-        )
+        self.decoder = self._load_session(decoder_path, session_opts, fallback_opts)
         decoder_input_types = {inp.name: inp.type for inp in self.decoder.get_inputs()}
         self._decoder_embed_dtype = _onnx_type_to_dtype(decoder_input_types.get("inputs_embeds", ""))
         self._decoder_kv_dtype = _onnx_type_to_dtype(decoder_input_types.get("past_key_values.0.key", ""))
@@ -283,6 +274,27 @@ class FastVLM:
         self._load_configs(model_dir)
 
         logger.success(f"FastVLM loaded using {self._providers[0]}")
+
+    def _load_session(
+        self,
+        model_path: Path,
+        session_opts: ort.SessionOptions,
+        fallback_opts: ort.SessionOptions,
+    ) -> ort.InferenceSession:
+        """Load an ONNX session, retrying without graph optimizations if FP16 init fails."""
+        try:
+            return ort.InferenceSession(
+                str(model_path),
+                sess_options=session_opts,
+                providers=self._providers,
+            )
+        except Exception as exc:
+            logger.warning(f"Failed to load {model_path.name} with optimizations ({exc}). Retrying without them.")
+            return ort.InferenceSession(
+                str(model_path),
+                sess_options=fallback_opts,
+                providers=self._providers,
+            )
 
     def _load_configs(self, model_dir: Path) -> None:
         """Load tokenizer and preprocessing configs."""
