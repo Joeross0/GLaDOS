@@ -43,6 +43,7 @@ export default function HomePage() {
     () => ({
       "Content-Type": "application/json",
       "X-GLaDOS-Pin": pin,
+      "ngrok-skip-browser-warning": "1",
     }),
     [pin],
   );
