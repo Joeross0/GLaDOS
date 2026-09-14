@@ -1,0 +1,120 @@
+:root {
+  --amber: #ffb000;
+  --ink: #14110c;
+  --panel: #1d1810;
+  --dim: #8a7344;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: radial-gradient(circle at top, #2a2114 0%, var(--ink) 55%);
+  color: var(--amber);
+  font-family: "Lucida Console", "Consolas", monospace;
+}
+
+body {
+  padding: 24px;
+}
+
+.shell {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+h1 {
+  letter-spacing: 0.18em;
+  font-size: 1.4rem;
+  margin: 0 0 8px;
+}
+
+.sub {
+  color: var(--dim);
+  margin-bottom: 24px;
+}
+
+label {
+  display: block;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  margin: 16px 0 6px;
+  color: var(--dim);
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+  color: var(--amber);
+  background: var(--panel);
+  border: 1px solid #6b5424;
+  border-radius: 2px;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+}
+
+button {
+  padding: 10px 16px;
+  cursor: pointer;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+button:hover {
+  background: #2b2214;
+}
+
+.gate,
+.console {
+  border: 1px solid #6b5424;
+  background: rgba(20, 17, 12, 0.86);
+  padding: 24px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.feed {
+  min-height: 280px;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid #6b5424;
+  padding: 12px;
+  background: #100e0a;
+  white-space: pre-wrap;
+}
+
+.line.you {
+  color: #7dd3fc;
+}
+
+.line.glados {
+  color: var(--amber);
+}
+
+.line.vision {
+  color: #86efac;
+}
+
+.scene {
+  color: #86efac;
+  min-height: 72px;
+  margin-bottom: 16px;
+}
+
+.error {
+  color: #f87171;
+  margin-top: 12px;
+}

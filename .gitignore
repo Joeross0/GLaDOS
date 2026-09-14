@@ -177,3 +177,7 @@ tmp/
 
 # Claude Code
 CLAUDE.md
+
+# Web portal
+node_modules/
+.next/

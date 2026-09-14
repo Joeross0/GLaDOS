@@ -31,6 +31,7 @@ from ..autonomy.llm_client import LLMConfig
 from ..autonomy.summarization import estimate_tokens
 from ..mcp import MCPManager, MCPServerConfig
 from ..observability import MindRegistry, ObservabilityBus, trim_message
+from ..portal import PortalConfig, start_portal_server
 from ..vision import VisionConfig, VisionState
 from ..vision.constants import SYSTEM_PROMPT_VISION_HANDLING
 from .audio_data import AudioMessage
@@ -123,6 +124,7 @@ class GladosConfig(BaseModel):
     tool_timeout: float = 30.0
     vision: VisionConfig | None = None
     autonomy: AutonomyConfig | None = None
+    portal: PortalConfig | None = None
     mcp_servers: list[MCPServerConfig] | None = None
 
     @model_validator(mode="after")
@@ -243,6 +245,7 @@ class Glados:
         tts_enabled: bool = True,
         asr_muted: bool = False,
         llm_headers: dict[str, str] | None = None,
+        portal_config: PortalConfig | None = None,
     ) -> None:
         """
         Initialize the Glados voice assistant with configuration parameters.
@@ -287,6 +290,7 @@ class Glados:
         self._conversation_store = ConversationStore(initial_messages=list(personality_preprompt))
         self.vision_config = vision_config
         self.autonomy_config = autonomy_config or AutonomyConfig()
+        self.portal_config = portal_config
         self.vision_state: VisionState | None = VisionState() if self.vision_config else None
         self.vision_request_queue: queue.Queue | None = queue.Queue() if self.vision_config else None
         self.autonomy_event_bus: EventBus | None = None
@@ -673,6 +677,10 @@ class Glados:
         if self.subagent_manager:
             self.subagent_manager.start_all()
 
+        self.portal_server = None
+        if self.portal_config and self.portal_config.enabled:
+            self.portal_server = start_portal_server(self, self.portal_config)
+
     def _register_subagents(self) -> None:
         """Register configured subagents with the manager."""
         if not self.subagent_manager:
@@ -875,6 +883,7 @@ class Glados:
                 tts_enabled=config.tts_enabled,
                 asr_muted=config.asr_muted,
                 llm_headers=config.llm_headers,
+                portal_config=config.portal,
             )
         except Exception:
             cls._close_audio_backend(audio_io)

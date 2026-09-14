@@ -73,6 +73,11 @@ Glados:
     #   transport: "http"
     #   url: "http://homeassistant.local:8123/api/mcp"
     #   token: "YOUR_LONG_LIVED_TOKEN"
+  portal:
+    enabled: true
+    host: "0.0.0.0"
+    port: 9119
+    pin: "9119"
   vision:
     camera_spec: 0
     capture_interval_seconds: 5
