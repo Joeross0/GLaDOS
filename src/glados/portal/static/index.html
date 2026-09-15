@@ -69,7 +69,14 @@
       <p class="sub" id="status-line">Linked to this host. API: /api</p>
       <div class="grid">
         <div>
-          <label>Vision</label>
+          <label>Your camera</label>
+          <video id="preview" autoplay muted playsinline style="width:100%;background:#100e0a;border:1px solid #6b5424;"></video>
+          <div class="row">
+            <button type="button" id="media-on">Enable camera + mic</button>
+            <button type="button" id="media-off">Stop media</button>
+          </div>
+          <div class="meta" id="media-meta">Media idle</div>
+          <label>What she sees</label>
           <div class="meta" id="scene-meta">Waiting for camera…</div>
           <div class="scene" id="scene">No vision snapshot yet.</div>
         </div>
@@ -186,6 +193,79 @@
 
     const saved = localStorage.getItem("glados-pin");
     if (saved) pinInput.value = saved;
+
+    const preview = document.getElementById("preview");
+    const mediaMeta = document.getElementById("media-meta");
+    let mediaStream = null;
+    let audioCtx = null;
+    let processor = null;
+    let cameraTimer = null;
+
+    function mediaHeaders(extra = {}) {
+      return { ...headers(), ...extra };
+    }
+
+    async function sendAudio(float32, sampleRate) {
+      await fetch("/api/audio", {
+        method: "POST",
+        headers: mediaHeaders({ "X-Sample-Rate": String(sampleRate), "Content-Type": "application/octet-stream" }),
+        body: float32.buffer,
+      });
+    }
+
+    async function sendFrame() {
+      if (!preview.videoWidth) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = preview.videoWidth;
+      canvas.height = preview.videoHeight;
+      canvas.getContext("2d").drawImage(preview, 0, 0);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.7));
+      if (!blob) return;
+      await fetch("/api/camera", {
+        method: "POST",
+        headers: mediaHeaders({ "Content-Type": "image/jpeg" }),
+        body: blob,
+      });
+    }
+
+    document.getElementById("media-on").addEventListener("click", async () => {
+      consoleError.textContent = "";
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true },
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        });
+        preview.srcObject = mediaStream;
+        audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(mediaStream);
+        processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = (event) => {
+          const channel = event.inputBuffer.getChannelData(0);
+          void sendAudio(new Float32Array(channel), audioCtx.sampleRate);
+        };
+        const mute = audioCtx.createGain();
+        mute.gain.value = 0;
+        source.connect(processor);
+        processor.connect(mute);
+        mute.connect(audioCtx.destination);
+        cameraTimer = setInterval(() => void sendFrame(), 2000);
+        mediaMeta.textContent = `Streaming mic @ ${audioCtx.sampleRate} Hz and camera frames`;
+      } catch (err) {
+        consoleError.textContent = err.message || "Media permission denied";
+      }
+    });
+
+    document.getElementById("media-off").addEventListener("click", () => {
+      if (cameraTimer) clearInterval(cameraTimer);
+      if (processor) processor.disconnect();
+      if (audioCtx) audioCtx.close();
+      if (mediaStream) mediaStream.getTracks().forEach((track) => track.stop());
+      preview.srcObject = null;
+      mediaStream = null;
+      processor = null;
+      audioCtx = null;
+      mediaMeta.textContent = "Media idle";
+    });
   </script>
 </body>
 </html>

@@ -56,6 +56,7 @@ class VisionProcessor:
 
         # Camera capture
         self._capture: cv2.VideoCapture | None = None
+        self._remote_frames: queue.Queue[NDArray[np.uint8]] = queue.Queue(maxsize=2)
         self._ensure_capture_ready()
 
         # Frame differencing for scene change detection
@@ -75,7 +76,7 @@ class VisionProcessor:
                     self._sleep(loop_started)
                     continue
 
-                if not self._ensure_capture_ready():
+                if not self._has_remote_frame() and not self._ensure_capture_ready():
                     self._sleep(loop_started)
                     continue
 
@@ -117,6 +118,26 @@ class VisionProcessor:
                 self._capture.release()
             logger.info("VisionProcessor thread finished.")
 
+    def push_remote_frame(self, frame: NDArray[np.uint8]) -> None:
+        """Accept a BGR frame from the web portal camera."""
+        try:
+            self._remote_frames.put_nowait(frame)
+        except queue.Full:
+            try:
+                self._remote_frames.get_nowait()
+            except queue.Empty:
+                pass
+            self._remote_frames.put_nowait(frame)
+
+    def _has_remote_frame(self) -> bool:
+        return not self._remote_frames.empty()
+
+    def _pop_remote_frame(self) -> NDArray[np.uint8] | None:
+        try:
+            return self._remote_frames.get_nowait()
+        except queue.Empty:
+            return None
+
     def _ensure_capture_ready(self) -> bool:
         """Ensure camera capture is ready.
 
@@ -147,7 +168,11 @@ class VisionProcessor:
         Returns:
             Frame as uint8 array (BGR, HWC) or None if capture failed
         """
-        assert self._capture is not None
+        remote = self._pop_remote_frame()
+        if remote is not None:
+            return remote
+        if self._capture is None:
+            return None
         ret, frame = self._capture.read()
         if not ret or frame is None:
             logger.warning("VisionProcessor: Failed to capture frame from camera {}.", self.config.redacted_camera_spec_for_log())

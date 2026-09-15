@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from loguru import logger
 
 from .config import PortalConfig
+from .media_bridge import MediaBridge
 
 if TYPE_CHECKING:
     from ..core.engine import Glados
@@ -26,6 +27,8 @@ API_INDEX = {
         "GET /api/vision": "Latest camera description",
         "GET /api/events": "Dialog and vision events (?since=unix)",
         "POST /api/chat": "Send a text message {text}",
+        "POST /api/audio": "Raw float32 PCM microphone chunks (X-Sample-Rate header)",
+        "POST /api/camera": "JPEG frame from the browser camera",
         "GET /health": "Liveness probe",
     },
 }
@@ -39,6 +42,8 @@ def _pins_match(left: str, right: str) -> bool:
 
 def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPServer:
     """Start the portal HTTP server in a daemon thread."""
+
+    media = MediaBridge(engine)
 
     class PortalHandler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
@@ -55,7 +60,10 @@ def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPSe
         def _cors(self) -> None:
             origin = self.headers.get("Origin", "*")
             self.send_header("Access-Control-Allow-Origin", origin or "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-GLaDOS-Pin, ngrok-skip-browser-warning")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, X-GLaDOS-Pin, X-Sample-Rate, ngrok-skip-browser-warning",
+            )
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Credentials", "true")
 
@@ -176,7 +184,16 @@ def start_portal_server(engine: Glados, config: PortalConfig) -> ThreadingHTTPSe
                 self._json({"ok": False, "error": "invalid pin"}, 401)
                 return
             length = int(self.headers.get("Content-Length", "0") or 0)
-            raw = self.rfile.read(length) if length else b"{}"
+            raw = self.rfile.read(length) if length else b""
+            if path == "/api/audio":
+                sample_rate = int(self.headers.get("X-Sample-Rate", "16000") or 16000)
+                queued = media.ingest_audio(raw, sample_rate)
+                self._json({"ok": True, "chunks": queued})
+                return
+            if path == "/api/camera":
+                accepted = media.ingest_jpeg(raw)
+                self._json({"ok": accepted, "accepted": accepted}, 200 if accepted else 400)
+                return
             try:
                 payload = json.loads(raw.decode("utf-8") or "{}")
             except json.JSONDecodeError:
