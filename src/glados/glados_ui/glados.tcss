@@ -243,32 +243,6 @@ OnOffPickerScreen {
     width: 80%;
 }
 
-#scripts_dialog {
-    border-title-align: center;
-    border: round $primary;
-    color: $primary;
-    background: $background;
-    padding: 1 2;
-    height: 85%;
-    width: 90%;
-}
-
-#scripts_hint {
-    color: $foreground 80%;
-    height: auto;
-    padding-bottom: 1;
-}
-
-#scripts_text {
-    height: 1fr;
-    border: solid $primary 40%;
-}
-
-#scripts_buttons {
-    height: 3;
-    padding-top: 1;
-}
-
 #context_dialog,
 #messages_dialog,
 #info_dialog {

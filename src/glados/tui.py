@@ -19,10 +19,11 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from rich.markup import escape
-from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static, TextArea
+from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static
 from textual.worker import Worker, WorkerState
 
 from glados.core.engine import Glados, GladosConfig
+from glados.core.style_scripts import style_scripts_path
 from glados.glados_ui.text_resources import shortcuts_text, welcome_tips
 from glados.observability import ObservabilityEvent
 from glados.utils.resources import resource_path
@@ -79,7 +80,7 @@ class GladosCommands(Provider):
         tui_commands = [
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
-            ("Scripts", "Paste style scripts for GLaDOS cadence", partial(app.action_scripts)),
+            ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -121,7 +122,7 @@ class GladosCommands(Provider):
         tui_commands = [
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
-            ("Scripts", "Paste style scripts for GLaDOS cadence", partial(app.action_scripts)),
+            ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -716,58 +717,6 @@ class MessagesScreen(ModalScreen[None]):
         widget.update(content)
 
 
-class ScriptFeedScreen(ModalScreen[None]):
-    """Paste reference dialogue for cadence only. Stored locally, not in git."""
-
-    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
-        ("escape", "app.pop_screen", "Close screen")
-    ]
-
-    TITLE = "Style Scripts"
-
-    def compose(self) -> ComposeResult:
-        with Container(id="scripts_dialog"):
-            yield Label(
-                "Paste reference dialogue. She copies cadence, not quotes. Saved only on this machine.",
-                id="scripts_hint",
-            )
-            yield TextArea(id="scripts_text")
-            with Horizontal(id="scripts_buttons"):
-                yield Button("Apply", id="scripts_apply", variant="primary")
-                yield Button("Clear", id="scripts_clear")
-                yield Button("Close", id="scripts_close")
-
-    def on_mount(self) -> None:
-        dialog = self.query_one("#scripts_dialog")
-        dialog.border_title = self.TITLE
-        dialog.border_title_align = "center"
-        dialog.border_subtitle = "Esc closes without applying"
-        area = self.query_one("#scripts_text", TextArea)
-        app = cast(GladosUI, self.app)
-        if app.glados_engine_instance:
-            area.text = app.glados_engine_instance.get_style_scripts()
-        area.focus()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "scripts_close":
-            self.dismiss()
-            return
-        app = cast(GladosUI, self.app)
-        if not app.glados_engine_instance:
-            app.notify("Engine not ready.", severity="warning")
-            return
-        area = self.query_one("#scripts_text", TextArea)
-        if event.button.id == "scripts_clear":
-            area.text = ""
-            response = app.glados_engine_instance.apply_style_scripts("")
-        else:
-            response = app.glados_engine_instance.apply_style_scripts(area.text)
-        logger.success("TUI scripts: {}", response)
-        app.notify(response, title="Style Scripts", timeout=4)
-        if event.button.id == "scripts_apply":
-            self.dismiss()
-
-
 class InfoScreen(ModalScreen[None]):
     """Display command output in a scrollable dialog."""
 
@@ -1132,6 +1081,7 @@ class GladosUI(App[None]):
         self._theme_override = theme
         self._active_theme = None
         self._queue_metrics = {}
+        self._style_scripts_mtime: float | None = None
 
     def compose(self) -> ComposeResult:
         """
@@ -1231,6 +1181,7 @@ class GladosUI(App[None]):
         self.push_screen(SplashScreen())
         self._bind_panels()
         self.set_interval(0.3, self._refresh_panels)
+        self.set_interval(1.0, self._reload_style_scripts_if_changed)
         self.focus_command_input()
 
     def on_unmount(self) -> None:
@@ -1298,9 +1249,43 @@ class GladosUI(App[None]):
             self.push_screen(MicPickerScreen())
 
     def action_scripts(self) -> None:
-        """Open the style-script paste box."""
-        if not isinstance(self.screen, ScriptFeedScreen):
-            self.push_screen(ScriptFeedScreen())
+        """Open data/style_scripts.txt in the text editor."""
+        engine = self.glados_engine_instance
+        if engine:
+            path = engine.open_style_scripts()
+        else:
+            from glados.core.style_scripts import open_style_scripts_in_editor
+
+            path = open_style_scripts_in_editor()
+        try:
+            self._style_scripts_mtime = path.stat().st_mtime
+        except OSError:
+            self._style_scripts_mtime = None
+        self.notify(f"Opened {path}. Save in the editor to load.", title="Style Scripts", timeout=4)
+
+    def _reload_style_scripts_if_changed(self) -> None:
+        engine = self.glados_engine_instance
+        if not engine:
+            return
+        path = style_scripts_path()
+        if not path.is_file():
+            if self._style_scripts_mtime is not None:
+                self._style_scripts_mtime = None
+                engine.reload_style_scripts()
+            return
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return
+        if self._style_scripts_mtime is None:
+            self._style_scripts_mtime = mtime
+            return
+        if mtime == self._style_scripts_mtime:
+            return
+        self._style_scripts_mtime = mtime
+        response = engine.reload_style_scripts()
+        logger.success("Style scripts reloaded: {}", response)
+        self.notify(response, title="Style Scripts", timeout=3)
 
     def _mic_device_choices(self) -> list[tuple[int | None, str]]:
         engine = self.glados_engine_instance

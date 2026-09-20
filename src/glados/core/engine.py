@@ -46,7 +46,13 @@ from .llm_tracking import InFlightCounter
 from .speech_listener import SpeechListener
 from .speech_player import SpeechPlayer
 from .spoken_echo import SpokenTranscriptFilter
-from .style_scripts import load_style_scripts, save_style_scripts, wrap_style_scripts, STYLE_SCRIPTS_PREFIX
+from .style_scripts import (
+    STYLE_SCRIPTS_PREFIX,
+    load_style_scripts,
+    open_style_scripts_in_editor,
+    save_style_scripts,
+    wrap_style_scripts,
+)
 from .text_listener import TextListener
 from .tool_executor import ToolExecutor
 from .tts_synthesizer import TextToSpeechSynthesizer
@@ -392,7 +398,7 @@ class Glados:
                     [{"role": "system", "content": SYSTEM_PROMPT_VISION_HANDLING}] + current_messages
                 )
 
-        self.apply_style_scripts(load_style_scripts())
+        self.reload_style_scripts()
 
         # Initialize spoken text converter, that converts text to spoken text. eg. 12 -> "twelve"
         self._stc = stc.SpokenTextConverter()
@@ -1105,11 +1111,18 @@ class Glados:
 
     def apply_style_scripts(self, raw: str) -> str:
         save_style_scripts(raw)
+        return self.reload_style_scripts()
+
+    def reload_style_scripts(self) -> str:
+        raw = load_style_scripts()
         wrapped = wrap_style_scripts(raw)
         self._conversation_store.upsert_system_by_prefix(STYLE_SCRIPTS_PREFIX, wrapped)
         if not wrapped:
             return "Style scripts cleared."
         return f"Style scripts loaded ({len(raw.strip())} characters)."
+
+    def open_style_scripts(self):
+        return open_style_scripts_in_editor()
 
     def submit_text_input(self, text: str, source: str = "text") -> bool:
         text = text.strip()

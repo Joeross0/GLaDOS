@@ -19,6 +19,15 @@ def test_wrap_includes_prefix(tmp_path: Path) -> None:
     assert "Hello, test subject." in wrapped
 
 
+def test_ensure_creates_file(tmp_path: Path) -> None:
+    from glados.core.style_scripts import ensure_style_scripts_file
+
+    path = tmp_path / "style_scripts.txt"
+    created = ensure_style_scripts_file(path)
+    assert created.exists()
+    assert created.read_text(encoding="utf-8") == ""
+
+
 def test_save_and_load_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "style_scripts.txt"
     save_style_scripts("line one\nline two", path)
