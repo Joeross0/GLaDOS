@@ -1178,6 +1178,14 @@ class Glados:
         )
         register(
             CommandSpec(
+                name="interrupt",
+                description="Allow talking over GLaDOS while she is speaking",
+                usage="/interrupt on|off",
+                handler=self._cmd_interrupt,
+            )
+        )
+        register(
+            CommandSpec(
                 name="mic",
                 description="Select the microphone input device",
                 usage="/mic list | /mic <index>|default",
@@ -1335,6 +1343,23 @@ class Glados:
             self.set_asr_muted(True)
             return "ASR muted."
         return "Usage: /asr on|off"
+
+    def set_interruptible(self, enabled: bool) -> None:
+        self.interruptible = enabled
+        if self.speech_listener is not None:
+            self.speech_listener.interruptible = enabled
+
+    def _cmd_interrupt(self, args: list[str]) -> str:
+        if not args:
+            return f"Interrupt is {'on' if self.interruptible else 'off'}."
+        arg = args[0].lower()
+        if arg in {"on", "enable", "yes"}:
+            self.set_interruptible(True)
+            return "Interrupt on. You can talk over her."
+        if arg in {"off", "disable", "no"}:
+            self.set_interruptible(False)
+            return "Interrupt off. She will finish speaking."
+        return "Usage: /interrupt on|off"
 
     def _cmd_mic(self, args: list[str]) -> str:
         devices = self.list_input_devices()

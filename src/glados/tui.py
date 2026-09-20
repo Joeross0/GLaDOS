@@ -41,6 +41,7 @@ class GladosCommands(Provider):
         "tts": "Text-to-Speech",
         "asr": "Speech Recognition",
         "mcp": "MCP Servers",
+        "interrupt": "Interrupt",
     }
 
     @property
@@ -386,6 +387,7 @@ class StatusPanel(Static):
             f"Speaking: {speaking_indicator}  {'SPEAKING' if engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set() else 'DONE / LISTENING'}",
             f"Microphone: {vad_indicator} {rms_db:5.1f} dB",
             f"Input: {mic_name}",
+            f"Interrupt: {'ON' if engine.interruptible else 'OFF'}",
         ]
         self.update("\n".join(lines))
 
@@ -816,6 +818,7 @@ class OnOffPickerScreen(ModalScreen[None]):
     _DISPLAY_NAMES: ClassVar[dict[str, str]] = {
         "tts": "Text-to-Speech",
         "asr": "Speech Recognition",
+        "interrupt": "Interrupt",
     }
 
     def __init__(self, command: str) -> None:
@@ -851,6 +854,8 @@ class OnOffPickerScreen(ModalScreen[None]):
             return not engine.tts_muted_event.is_set()
         if self._command == "autonomy":
             return engine.autonomy_config.enabled
+        if self._command == "interrupt":
+            return engine.interruptible
         return False
 
     def on_option_list_option_selected(self, message: OptionList.OptionSelected) -> None:
@@ -1117,6 +1122,7 @@ class GladosUI(App[None]):
         with Horizontal(id="command_bar"):
             yield SpeechBadge(id="speech_badge")
             yield Button("Mic: System default", id="mic_button")
+            yield Button("Interrupt: ON", id="interrupt_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1285,9 +1291,28 @@ class GladosUI(App[None]):
             return
         button.label = f"Mic: {self._current_mic_label()}"
 
+    def _refresh_interrupt_button(self) -> None:
+        try:
+            button = self.query_one("#interrupt_button", Button)
+        except NoMatches:
+            return
+        enabled = True
+        if self.glados_engine_instance:
+            enabled = self.glados_engine_instance.interruptible
+        button.label = f"Interrupt: {'ON' if enabled else 'OFF'}"
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "mic_button":
             self.action_mic_picker()
+            return
+        if event.button.id == "interrupt_button":
+            engine = self.glados_engine_instance
+            if not engine:
+                self.notify("Engine not ready.", severity="warning")
+                return
+            response = engine.handle_command("/interrupt off" if engine.interruptible else "/interrupt on")
+            self.notify(response, title="Interrupt", timeout=3)
+            self._refresh_interrupt_button()
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""
@@ -1331,6 +1356,7 @@ class GladosUI(App[None]):
                 self.glados_engine_instance.play_announcement()
                 self.start_glados()
                 self._refresh_mic_button()
+                self._refresh_interrupt_button()
             self.focus_command_input()
         elif message.state == WorkerState.ERROR:
             worker = message.worker
@@ -1419,6 +1445,7 @@ class GladosUI(App[None]):
                 self.notify("GLaDOS finished speaking.", title="Listening", timeout=3)
             self._was_speaking = speaking
         self._refresh_mic_button()
+        self._refresh_interrupt_button()
 
     @property
     def queue_metrics(self) -> dict[str, dict[str, float | int | None]]:
