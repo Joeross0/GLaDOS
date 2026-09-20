@@ -30,6 +30,8 @@ export default function Page() {
   const logRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const wantListenRef = useRef(false);
   const detectorRef = useRef<Detector | null>(null);
   const lastSceneRef = useRef("");
   const busyRef = useRef(false);
@@ -161,7 +163,19 @@ export default function Page() {
     await ask(message, false, scene);
   }
 
-  function toggleListen() {
+  function stopMic() {
+    wantListenRef.current = false;
+    (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec?.stop();
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current = null;
+    setListening(false);
+  }
+
+  async function toggleListen() {
+    if (listening) {
+      stopMic();
+      return;
+    }
     const Speech = (
       window as typeof window & {
         SpeechRecognition?: new () => BrowserSpeech;
@@ -174,16 +188,33 @@ export default function Page() {
         }
       ).webkitSpeechRecognition;
     if (!Speech) {
-      setLines((current) => [...current, { role: "system", text: "This browser has no speech recognition. Use Chrome." }]);
+      setLines((current) => [
+        ...current,
+        {
+          role: "system",
+          text: "This phone browser cannot do speech recognition. Open the site in Chrome on Android, or type.",
+        },
+      ]);
       return;
     }
-    if (listening) {
-      (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec?.stop();
-      setListening(false);
+    try {
+      micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (error) {
+      setLines((current) => [
+        ...current,
+        {
+          role: "system",
+          text:
+            error instanceof Error
+              ? `Mic blocked: ${error.message}. Allow the microphone for this site, or type.`
+              : "Mic blocked. Allow the microphone for this site, or type.",
+        },
+      ]);
       return;
     }
+    const mobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
     const recognition = new Speech();
-    recognition.continuous = true;
+    recognition.continuous = !mobile;
     recognition.interimResults = false;
     recognition.lang = "en-US";
     recognition.onresult = (event: BrowserSpeechEvent) => {
@@ -194,17 +225,52 @@ export default function Page() {
         .trim();
       if (transcript) void ask(transcript, false, scene);
     };
-    recognition.onerror = () => setListening(false);
-    recognition.onend = () => setListening(false);
-    recognition.start();
-    setListening(true);
-    (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec = recognition;
+    recognition.onerror = (event?: { error?: string }) => {
+      if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
+        setLines((current) => [
+          ...current,
+          {
+            role: "system",
+            text: "This phone blocked speech recognition. Open in Chrome or Safari, allow the microphone, then tap Mic again. In-app browsers usually fail.",
+          },
+        ]);
+      }
+      stopMic();
+    };
+    recognition.onend = () => {
+      if (wantListenRef.current && mobile && !busyRef.current) {
+        try {
+          recognition.start();
+        } catch {
+          stopMic();
+        }
+        return;
+      }
+      if (!wantListenRef.current) stopMic();
+    };
+    try {
+      wantListenRef.current = true;
+      recognition.start();
+      setListening(true);
+      (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec = recognition;
+    } catch (error) {
+      stopMic();
+      setLines((current) => [
+        ...current,
+        {
+          role: "system",
+          text:
+            error instanceof Error
+              ? `Mic start failed: ${error.message}`
+              : "Mic start failed on this phone browser.",
+        },
+      ]);
+    }
   }
 
   useEffect(() => {
     return () => {
-      const recognition = (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec;
-      recognition?.stop();
+      stopMic();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       audioRef.current?.pause();
     };
@@ -359,7 +425,7 @@ type BrowserSpeech = {
   interimResults: boolean;
   lang: string;
   onresult: ((event: BrowserSpeechEvent) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event?: { error?: string }) => void) | null;
   onend: (() => void) | null;
   start(): void;
   stop(): void;
