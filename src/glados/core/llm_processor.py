@@ -384,7 +384,7 @@ class LanguageModelProcessor:
         sentence = re.sub(r"\*.*?\*|\(.*?\)", "", sentence)
         sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace("  ", " ").replace(":", " ")
 
-            if sentence and sentence != ".":  # Avoid sending just a period
+        if sentence and sentence != ".":  # Avoid sending just a period
             if self._is_silence_reply(sentence):
                 logger.info("LLM Processor: Staying silent.")
                 self._end_thinking()
