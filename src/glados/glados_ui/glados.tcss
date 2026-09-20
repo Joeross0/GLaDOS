@@ -92,7 +92,8 @@ HeaderClock {
 #scripts_button,
 #train_button,
 #finetune_button,
-#nudge_button {
+#nudge_button,
+#mind_button {
     width: auto;
     max-width: 42;
     margin: 0 1 0 0;
@@ -113,7 +114,9 @@ HeaderClock {
 #mcp_panel.hidden,
 #mcp_title.hidden,
 #queue_panel.hidden,
-#queue_title.hidden {
+#queue_title.hidden,
+#performance_panel.hidden,
+#performance_title.hidden {
     display: none;
 }
 
@@ -194,6 +197,7 @@ HeaderClock {
 #vision_panel,
 #autonomy_panel,
 #queue_panel,
+#performance_panel,
 #mcp_panel {
     border: solid $primary 40%;
     padding: 1 2;
@@ -214,6 +218,10 @@ HeaderClock {
 
 #queue_panel {
     height: 4;
+}
+
+#performance_panel {
+    height: 8;
 }
 
 #mcp_panel {
@@ -406,6 +414,45 @@ SplashScreen {
 }
 
 #observability_status {
+    color: $primary 70%;
+    height: 1;
+}
+
+#mind_dialog {
+    border-title-align: center;
+    border: $primary 70% panel;
+    color: $primary;
+    padding: 1 2;
+    height: 85%;
+    width: 92%;
+}
+
+#mind_body {
+    height: 1fr;
+}
+
+#mind_thoughts_col {
+    width: 3fr;
+    height: 1fr;
+}
+
+#mind_perf_col {
+    width: 2fr;
+    height: 1fr;
+    padding-left: 1;
+}
+
+#mind_thoughts {
+    scrollbar-color: $primary 40%;
+    height: 1fr;
+}
+
+#mind_performance {
+    height: 1fr;
+    color: $foreground;
+}
+
+#mind_status {
     color: $primary 70%;
     height: 1;
 }

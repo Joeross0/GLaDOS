@@ -47,6 +47,7 @@ shortcuts_text = (
     "Shortcuts\n"
     "\n"
     "F1      Help (this screen)\n"
+    "F2      Thoughts and performance\n"
     "^p      Command palette\n"
     "\n"
     "^d      Toggle dialog panel\n"

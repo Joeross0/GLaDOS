@@ -30,7 +30,7 @@ from ..autonomy.events import TimeTickEvent
 from ..autonomy.llm_client import LLMConfig
 from ..autonomy.summarization import estimate_tokens
 from ..mcp import MCPManager, MCPServerConfig
-from ..observability import MindRegistry, ObservabilityBus, trim_message
+from ..observability import MindRegistry, ObservabilityBus, PerformanceStats, trim_message
 from ..portal import PortalConfig, start_portal_server
 from ..vision import VisionConfig, VisionState
 from ..vision.constants import SYSTEM_PROMPT_VISION_HANDLING
@@ -327,6 +327,7 @@ class Glados:
         self._emotion_agent: EmotionAgent | None = None
         self.constitutional_state = ConstitutionalState()
         self.observability_bus = ObservabilityBus()
+        self.performance_stats = PerformanceStats()
         self.mind_registry = MindRegistry()
         self.interaction_state = InteractionState()
         self.asr_muted_event = threading.Event()
@@ -497,6 +498,7 @@ class Glados:
             lane="priority",
             thinking_event=self.thinking_event,
             style_model_provider=lambda: self.style_model,
+            performance_stats=self.performance_stats,
         )
         self.autonomy_llm_processors: list[LanguageModelProcessor] = []
         autonomy_parallel_calls = 0
@@ -526,7 +528,9 @@ class Glados:
                     extra_headers=llm_headers,
                     lane="autonomy",
                     inflight_counter=self._autonomy_inflight,
+                    thinking_event=self.thinking_event,
                     style_model_provider=lambda: self.style_model,
+                    performance_stats=self.performance_stats,
                 )
             )
 
@@ -589,6 +593,7 @@ class Glados:
                 request_queue=self.vision_request_queue,
                 event_bus=self.autonomy_event_bus,
                 observability_bus=self.observability_bus,
+                performance_stats=self.performance_stats,
             )
 
         self.autonomy_ticker_thread: threading.Thread | None = None
@@ -1282,6 +1287,15 @@ class Glados:
         )
         register(
             CommandSpec(
+                name="mind",
+                description="Open thoughts and performance (TUI)",
+                usage="/mind",
+                handler=self._cmd_mind,
+                aliases=("thoughts",),
+            )
+        )
+        register(
+            CommandSpec(
                 name="mcp",
                 description="Show MCP server status",
                 usage="/mcp status",
@@ -1478,6 +1492,9 @@ class Glados:
 
     def _cmd_observe(self, _args: list[str]) -> str:
         return "Observability is available in the TUI via /observe."
+
+    def _cmd_mind(self, _args: list[str]) -> str:
+        return "Thoughts and performance are available in the TUI via /mind."
 
     def _cmd_slots(self, _args: list[str]) -> str:
         if not self.autonomy_slots:

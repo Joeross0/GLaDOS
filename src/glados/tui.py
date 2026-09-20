@@ -37,7 +37,7 @@ class GladosCommands(Provider):
     """Command provider for GLaDOS TUI command palette."""
 
     # Commands that duplicate TUI features or are irrelevant in TUI
-    _HIDDEN_COMMANDS = {"help", "observe", "slots"}
+    _HIDDEN_COMMANDS = {"help", "observe", "slots", "mind", "thoughts"}
 
     # Display names for commands (command_name -> display_name)
     _DISPLAY_NAMES: ClassVar[dict[str, str]] = {
@@ -89,6 +89,7 @@ class GladosCommands(Provider):
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
+            ("Mind", "Open thoughts and performance", partial(app.action_mind)),
             ("Help", "Show keyboard shortcuts", partial(app.action_help)),
         ]
 
@@ -134,6 +135,7 @@ class GladosCommands(Provider):
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
+            ("Mind", "Open thoughts and performance", partial(app.action_mind)),
             ("Help", "Show keyboard shortcuts", partial(app.action_help)),
         ]
 
@@ -488,6 +490,39 @@ class AutonomyPanel(Static):
             f"Workers: {workers}  In-flight: {inflight}",
             f"Queue: {queue_depth}  Jobs: {jobs}",
             f"Coalesce ticks: {coalesce}",
+        ]
+        self.update("\n".join(lines))
+
+
+def _format_seconds(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value < 10:
+        return f"{value:.1f}s"
+    return f"{value:.0f}s"
+
+
+class PerformancePanel(Static):
+    can_focus = False
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.markup = True
+
+    def render_performance(self, app: "GladosUI") -> None:
+        engine = app.glados_engine_instance
+        if not engine:
+            self.update("Performance: starting...")
+            return
+        stats = engine.performance_stats.snapshot()
+        last = stats.get("last") or {}
+        lines = [
+            f"Last lane: {last.get('lane') or '—'}",
+            f"Queue wait: {_format_seconds(last.get('wait_s'))}  avg {_format_seconds(stats.get('avg_wait_s'))}",
+            f"First token: {_format_seconds(last.get('first_token_s'))}  avg {_format_seconds(stats.get('avg_first_token_s'))}",
+            f"LLM reply: {_format_seconds(last.get('total_s'))}  avg {_format_seconds(stats.get('avg_llm_s'))}",
+            f"Vision caption: {_format_seconds(last.get('vision_s'))}  avg {_format_seconds(stats.get('avg_vision_s'))}",
+            f"Queues p:{engine.llm_queue_priority.qsize()} a:{engine.llm_queue_autonomy.qsize()}  inflight {engine.autonomy_inflight()}",
         ]
         self.update("\n".join(lines))
 
@@ -997,6 +1032,73 @@ class ObservabilityScreen(ModalScreen[None]):
         return " ".join(parts)
 
 
+class MindScreen(ModalScreen[None]):
+    """Thought process plus live performance timings."""
+
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
+        ("escape", "app.pop_screen", "Close screen")
+    ]
+
+    TITLE = "Mind"
+
+    def compose(self) -> ComposeResult:
+        with Container(id="mind_dialog"):
+            yield Label(self.TITLE, id="mind_title")
+            with Horizontal(id="mind_body"):
+                with Vertical(id="mind_thoughts_col"):
+                    yield Label("Thoughts", id="mind_thoughts_label")
+                    yield RichLog(id="mind_thoughts")
+                with Vertical(id="mind_perf_col"):
+                    yield Label("Performance", id="mind_perf_label")
+                    yield PerformancePanel(id="mind_performance")
+            yield Static("Esc to close", id="mind_status")
+
+    def on_mount(self) -> None:
+        dialog = self.query_one("#mind_dialog")
+        dialog.border_title = self.TITLE
+        dialog.border_title_align = "center"
+        self._log = self.query_one("#mind_thoughts", RichLog)
+        self._log.markup = True
+        self._perf = self.query_one("#mind_performance", PerformancePanel)
+        self._seen = 0.0
+        self._load_snapshot()
+        self.set_interval(0.25, self._refresh)
+
+    def _load_snapshot(self) -> None:
+        bus = self._get_bus()
+        if not bus:
+            self._log.write("[red]Thought bus unavailable.[/]")
+            return
+        for event in bus.snapshot(limit=200):
+            self._write_event(event)
+        self._perf.render_performance(cast(GladosUI, self.app))
+
+    def _refresh(self) -> None:
+        bus = self._get_bus()
+        if bus:
+            for event in bus.snapshot(limit=80):
+                self._write_event(event)
+        self._perf.render_performance(cast(GladosUI, self.app))
+
+    def _get_bus(self):
+        app = cast(GladosUI, self.app)
+        if not app.glados_engine_instance:
+            return None
+        return app.glados_engine_instance.observability_bus
+
+    def _write_event(self, event: ObservabilityEvent) -> None:
+        if event.timestamp <= self._seen:
+            return
+        if event.kind not in {"thought", "thinking", "request", "dispatch", "nudge"} and not (
+            event.source == "vision" and event.kind in {"update", "thought"}
+        ):
+            return
+        self._seen = event.timestamp
+        stamp = datetime.fromtimestamp(event.timestamp).strftime("%H:%M:%S")
+        message = escape(event.message.replace("\n", " "))
+        self._log.write(f"[dim]{stamp}[/] [bold]{event.source}.{event.kind}[/] {message}")
+
+
 # The App
 class GladosUI(App[None]):
     """The main app class for the GlaDOS ui."""
@@ -1062,6 +1164,7 @@ class GladosUI(App[None]):
     _autonomy_panel: AutonomyPanel | None = None
     _vision_panel: VisionPanel | None = None
     _mcp_panel: MCPPanel | None = None
+    _performance_panel: PerformancePanel | None = None
     _speech_badge: SpeechBadge | None = None
     _was_speaking: bool = False
     _queue_metrics: dict[str, dict[str, float | int | None]]
@@ -1136,6 +1239,8 @@ class GladosUI(App[None]):
                     yield AutonomyPanel(id="autonomy_panel")
                     yield Label("Q[u]u[/u]eues", id="queue_title")
                     yield QueuePanel(id="queue_panel")
+                    yield Label("[u]P[/u]erformance", id="performance_title")
+                    yield PerformancePanel(id="performance_panel")
                     yield Label("[u]M[/u]CP", id="mcp_title")
                     yield MCPPanel(id="mcp_panel")
 
@@ -1147,6 +1252,7 @@ class GladosUI(App[None]):
             yield Button("Train", id="train_button")
             yield Button("Fine-tune", id="finetune_button")
             yield Button("Nudge", id="nudge_button")
+            yield Button("Mind", id="mind_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1418,6 +1524,10 @@ class GladosUI(App[None]):
             return
         if event.button.id == "nudge_button":
             self.action_nudge()
+            return
+        if event.button.id == "mind_button":
+            self.action_mind()
+            return
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""
@@ -1427,6 +1537,11 @@ class GladosUI(App[None]):
         """Open the observability screen."""
         if not isinstance(self.screen, ObservabilityScreen):
             self.push_screen(ObservabilityScreen())
+
+    def action_mind(self) -> None:
+        """Open the thoughts and performance window."""
+        if not isinstance(self.screen, MindScreen):
+            self.push_screen(MindScreen())
 
     def action_toggle_info_panels(self) -> None:
         """Toggle the right info panel (Ctrl+I / Tab)."""
@@ -1481,6 +1596,13 @@ class GladosUI(App[None]):
         if not self.glados_engine_instance:
             self.notify("Engine not ready.", severity="warning")
             return
+        cmd = text.split()[0].lower()
+        if cmd in {"/mind", "/thoughts"}:
+            self.action_mind()
+            return
+        if cmd in {"/observe", "/observability"}:
+            self.action_observability()
+            return
         if not self.glados_engine_instance.submit_text_input(text):
             self.notify("No text submitted.", severity="warning")
 
@@ -1489,6 +1611,10 @@ class GladosUI(App[None]):
         key = event.key
         if key == "f1":
             self.action_help()
+            event.stop()
+            return
+        if key == "f2":
+            self.action_mind()
             event.stop()
             return
         if key == "ctrl+d":
@@ -1543,6 +1669,8 @@ class GladosUI(App[None]):
             self._vision_panel.render_vision(self)
         if self._mcp_panel:
             self._mcp_panel.render_mcp(self)
+        if self._performance_panel:
+            self._performance_panel.render_performance(self)
         if self._speech_badge:
             speaking = engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set()
             self._speech_badge.render_speech(self)
@@ -1576,6 +1704,7 @@ class GladosUI(App[None]):
             and self._autonomy_panel is not None
             and self._vision_panel is not None
             and self._mcp_panel is not None
+            and self._performance_panel is not None
             and self._speech_badge is not None
         ):
             return True
@@ -1586,6 +1715,7 @@ class GladosUI(App[None]):
             self._autonomy_panel = self.query_one("#autonomy_panel", AutonomyPanel)
             self._vision_panel = self.query_one("#vision_panel", VisionPanel)
             self._mcp_panel = self.query_one("#mcp_panel", MCPPanel)
+            self._performance_panel = self.query_one("#performance_panel", PerformancePanel)
             self._speech_badge = self.query_one("#speech_badge", SpeechBadge)
             return True
         except NoMatches:
@@ -1649,6 +1779,7 @@ class GladosUI(App[None]):
             ("vision_panel", "vision_title"),
             ("autonomy_panel", "autonomy_title"),
             ("queue_panel", "queue_title"),
+            ("performance_panel", "performance_title"),
             ("mcp_panel", "mcp_title"),
         ]
         for panel_id, title_id in panel_ids:

@@ -13,7 +13,7 @@ from numpy.typing import NDArray
 
 from ..autonomy import EventBus
 from ..autonomy.events import VisionUpdateEvent
-from ..observability import ObservabilityBus, trim_message
+from ..observability import ObservabilityBus, PerformanceStats, trim_message
 from .constants import VISION_DEFAULT_PROMPT
 from .fastvlm import FastVLM
 from .vision_config import VisionConfig
@@ -33,6 +33,7 @@ class VisionProcessor:
         request_queue: queue.Queue[VisionRequest] | None = None,
         event_bus: EventBus | None = None,
         observability_bus: ObservabilityBus | None = None,
+        performance_stats: PerformanceStats | None = None,
     ) -> None:
         """Initialize VisionProcessor.
 
@@ -50,6 +51,7 @@ class VisionProcessor:
         self._request_queue = request_queue
         self._event_bus = event_bus
         self._observability_bus = observability_bus
+        self._performance_stats = performance_stats
 
         # Load FastVLM model
         self._model = FastVLM(config.model_dir)
@@ -109,12 +111,21 @@ class VisionProcessor:
                 self._prompt_cache.clear()
 
                 # Get scene description using local ONNX model
+                started = time.perf_counter()
                 description = self._get_description(frame, prompt=VISION_DEFAULT_PROMPT, max_tokens=self.config.max_tokens)
+                if self._performance_stats:
+                    self._performance_stats.record_vision(time.perf_counter() - started)
 
                 if description:
                     self.vision_state.update(description, change_score=change_score)
                     self._last_snapshot_ts = time.time()
                     logger.success("Vision snapshot updated: {}", description)
+                    if self._observability_bus:
+                        self._observability_bus.emit(
+                            source="vision",
+                            kind="thought",
+                            message=trim_message(f"Caption: {description}"),
+                        )
                     forced = stale and change_score <= self.config.scene_change_threshold
                     self._publish_update(description, change_score, forced=forced)
                     self._last_description = description

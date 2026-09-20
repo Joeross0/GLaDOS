@@ -19,7 +19,7 @@ from .conversation_store import ConversationStore
 from .store import Store
 from .llm_tracking import InFlightCounter
 from ..mcp import MCPManager
-from ..observability import ObservabilityBus, trim_message
+from ..observability import ObservabilityBus, PerformanceStats, trim_message
 from ..tools import tool_definitions
 from ..vision.vision_state import VisionState
 from .spoken_echo import is_similar_utterance
@@ -72,6 +72,7 @@ class LanguageModelProcessor:
         inflight_counter: InFlightCounter | None = None,
         thinking_event: threading.Event | None = None,
         style_model_provider: Any | None = None,
+        performance_stats: PerformanceStats | None = None,
     ) -> None:
         self.llm_input_queue = llm_input_queue
         self.tool_calls_queue = tool_calls_queue
@@ -95,6 +96,7 @@ class LanguageModelProcessor:
         self._inflight_counter = inflight_counter
         self.thinking_event = thinking_event
         self._style_model_provider = style_model_provider
+        self._performance_stats = performance_stats
         self._ollama_mode = self._is_ollama_endpoint()
         self._finetuned = "11435" in str(self.completion_url) or "glados-lora" in self.model_name.lower()
         self._spoken_this_turn: list[str] = []
@@ -106,16 +108,28 @@ class LanguageModelProcessor:
             self.prompt_headers.update(extra_headers)
 
     def _begin_thinking(self, autonomy_mode: bool) -> None:
-        if autonomy_mode or self.thinking_event is None:
+        if self.thinking_event is None:
             return
         self.thinking_event.set()
+        lane = "autonomy" if autonomy_mode else self._lane
+        self._emit_thought("Waiting for the first token...", lane=lane)
         if self._observability_bus:
             self._observability_bus.emit(
                 source="llm",
                 kind="thinking",
                 message="Thinking...",
-                meta={"lane": self._lane},
+                meta={"lane": lane},
             )
+
+    def _emit_thought(self, message: str, *, lane: str | None = None) -> None:
+        if not self._observability_bus:
+            return
+        self._observability_bus.emit(
+            source="llm",
+            kind="thought",
+            message=trim_message(message, 800),
+            meta={"lane": lane or self._lane},
+        )
 
     def _end_thinking(self) -> None:
         if self.thinking_event is None:
@@ -483,6 +497,7 @@ class LanguageModelProcessor:
                         thinking_content = "".join(thinking_buffer)
                         if thinking_content.strip():
                             logger.debug(f"LLM thinking: {thinking_content[:200]}...")
+                            self._emit_thought(thinking_content)
                         thinking_buffer.clear()
                 else:
                     # Still in thinking block, buffer everything
@@ -564,6 +579,7 @@ class LanguageModelProcessor:
                     thinking_content = "".join(thinking_buffer)
                     if thinking_content.strip():
                         logger.debug(f"LLM thinking (harmony): {thinking_content[:200]}...")
+                        self._emit_thought(thinking_content)
                     thinking_buffer.clear()
                 in_thinking = False
             elif channel_name in self.HARMONY_ANALYSIS_CHANNELS:
@@ -725,6 +741,7 @@ class LanguageModelProcessor:
                 else:
                     inflight_guard = False
                 self._conversation_store.append(llm_message)
+                self._emit_thought(f"{self._lane} prompt: {llm_message.get('content', '')}")
                 self._begin_thinking(autonomy_mode)
 
                 self._spoken_this_turn = []
@@ -763,6 +780,8 @@ class LanguageModelProcessor:
                 thinking_buffer: list[str] = []
                 in_thinking = False
                 harmony_mode = False
+                generate_started = time.perf_counter()
+                first_token_s: float | None = None
                 try:
                     http_error_detail: tuple[str | int, str] | None = None
                     request_urls = [str(self.completion_url)]
@@ -820,6 +839,9 @@ class LanguageModelProcessor:
                                                         chunk, in_thinking, thinking_buffer, harmony_mode
                                                     )
                                                     if speakable:
+                                                        if first_token_s is None:
+                                                            first_token_s = time.perf_counter() - generate_started
+                                                            self._emit_thought(f"First token in {first_token_s:.1f}s")
                                                         self._end_thinking()
                                                         sentence_buffer.append(speakable)
                                                         if speakable.strip() in self.PUNCTUATION_SET and (
@@ -911,6 +933,16 @@ class LanguageModelProcessor:
                         # If an EOS was already sent by TTS from a *previous* partial sentence,
                         # this could lead to an early clear of currently_speaking.
                         # The `processing_active_event` is key to synchronize.
+                    leftover_thought = "".join(thinking_buffer).strip()
+                    if leftover_thought:
+                        self._emit_thought(leftover_thought)
+                    if self._performance_stats:
+                        self._performance_stats.record_llm(
+                            lane=self._lane,
+                            wait_s=wait_s,
+                            first_token_s=first_token_s,
+                            total_s=time.perf_counter() - generate_started,
+                        )
                     self._end_thinking()
                     if inflight_guard:
                         self._inflight_counter.decrement()
