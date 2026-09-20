@@ -202,8 +202,9 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
                 streamer=streamer,
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
-                temperature=0.7,
-                repetition_penalty=1.15,
+                temperature=0.55,
+                top_p=0.9,
+                repetition_penalty=1.28,
                 use_cache=True,
                 eos_token_id=eos_ids,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
@@ -272,7 +273,7 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             stop_event = Event()
             thread = Thread(
                 target=generate_reply,
-                args=(messages, 220, streamer, stop_event),
+                args=(messages, 140, streamer, stop_event),
                 daemon=True,
             )
             self.send_response(200)

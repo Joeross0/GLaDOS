@@ -402,7 +402,11 @@ class LanguageModelProcessor:
         sentence = "".join(current_sentence_parts)
         sentence = re.sub(r"\*.*?\*|\(.*?\)", "", sentence)
         sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace(":", " ")
-        sentence = re.sub(r"\b(?:[A-Za-z]\s+){1,}[A-Za-z]\b", lambda match: match.group(0).replace(" ", ""), sentence)
+        sentence = re.sub(
+            r"\b(?:[A-Za-z]\s+){2,}[A-Za-z]\b",
+            lambda match: match.group(0).replace(" ", ""),
+            sentence,
+        )
         sentence = re.sub(r" {2,}", " ", sentence).strip()
 
         if sentence and sentence != ".":  # Avoid sending just a period
@@ -410,8 +414,14 @@ class LanguageModelProcessor:
                 logger.info("LLM Processor: Staying silent.")
                 self._end_thinking()
                 return
+            if self._is_glued_nonsense(sentence):
+                logger.info("LLM Processor: Dropping glued nonsense: '{}'", sentence[:120])
+                return
             if self._is_repetitive_sentence(sentence):
                 logger.info("LLM Processor: Dropping repeated sentence: '{}'", sentence)
+                return
+            if self._finetuned and len(getattr(self, "_spoken_this_turn", [])) >= 5:
+                logger.info("LLM Processor: Stopping after five spoken sentences.")
                 return
             logger.info(f"LLM Processor: Sending to TTS queue: '{sentence}'")
             self._end_thinking()
@@ -422,6 +432,17 @@ class LanguageModelProcessor:
     def _is_silence_reply(sentence: str) -> bool:
         normalized = re.sub(r"[^a-z]+", " ", sentence.lower()).strip()
         return normalized in {"silence", "do nothing", "do nothing tool", "nothing", "no action", "pass"}
+
+    @staticmethod
+    def _is_glued_nonsense(sentence: str) -> bool:
+        letters = sum(char.isalpha() for char in sentence)
+        spaces = sentence.count(" ")
+        if letters >= 28 and spaces < max(2, letters // 14):
+            return True
+        lower = sentence.casefold()
+        if any(mark in lower for mark in ("wheatley", "end credits", "i am really sorry", "uservoice", "assistantvoice")):
+            return True
+        return False
 
     def _is_repetitive_sentence(self, sentence: str) -> bool:
         recent: list[str] = list(getattr(self, "_spoken_this_turn", []))
@@ -591,7 +612,7 @@ class LanguageModelProcessor:
     def _build_messages(self, autonomy_mode: bool) -> list[dict[str, Any]]:
         """Build the message list for the LLM request, injecting context from registered sources."""
         messages = self._conversation_store.snapshot()
-        if self._finetuned and not autonomy_mode:
+        if self._finetuned:
             last_user = ""
             for message in reversed(messages):
                 if message.get("role") == "user":
@@ -600,9 +621,16 @@ class LanguageModelProcessor:
                         break
             from .style_model import FINE_TUNE_SYSTEM
 
-            slim = [{"role": "system", "content": FINE_TUNE_SYSTEM}]
+            system = FINE_TUNE_SYSTEM
+            if autonomy_mode:
+                system += " This is a camera update. Two to four sentences. Do not reply SILENCE."
+            slim: list[dict[str, Any]] = [{"role": "system", "content": system}]
+            if self.vision_state:
+                snapshot = self.vision_state.snapshot()
+                if snapshot:
+                    slim.append({"role": "system", "content": f"[vision] {snapshot[:400]}"})
             if last_user:
-                slim.append({"role": "user", "content": last_user})
+                slim.append({"role": "user", "content": last_user[:800]})
             return slim
         extra_messages: list[dict[str, Any]] = []
 
@@ -850,6 +878,8 @@ class LanguageModelProcessor:
                                                         ):
                                                             self._process_sentence_for_tts(sentence_buffer)
                                                             sentence_buffer = []
+                                                            if self._finetuned and len(self._spoken_this_turn) >= 5:
+                                                                break
                                             elif cleaned_line_data.get("done_marker"):
                                                 break
                                             elif cleaned_line_data.get("done") and cleaned_line_data.get("response") == "":
