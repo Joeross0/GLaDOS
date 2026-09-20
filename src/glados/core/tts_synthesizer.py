@@ -97,10 +97,11 @@ class TextToSpeechSynthesizer:
                             },
                         )
 
+                    audio_data = np.asarray(audio_data, dtype=np.float32).reshape(-1)
                     if audio_data.size:
-                        pause = int(self.tts_model.sample_rate * 0.28)
+                        pause = max(1, int(self.tts_model.sample_rate * 0.28))
                         audio_data = np.concatenate(
-                            [audio_data, np.zeros(pause, dtype=audio_data.dtype)]
+                            [audio_data, np.zeros(pause, dtype=np.float32)]
                         )
                     self.audio_output_queue.put(AudioMessage(audio=audio_data, text=spoken_text_variant, is_eos=False))
             except queue.Empty:
