@@ -90,7 +90,8 @@ HeaderClock {
 #mic_button,
 #interrupt_button,
 #scripts_button,
-#train_button {
+#train_button,
+#finetune_button {
     width: auto;
     max-width: 42;
     margin: 0 1 0 0;

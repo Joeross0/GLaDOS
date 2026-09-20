@@ -6,6 +6,7 @@ from datetime import datetime
 import time
 from pathlib import Path
 import re
+import subprocess
 import sys
 from typing import ClassVar, cast, Iterable
 from urllib.parse import urlparse
@@ -83,6 +84,7 @@ class GladosCommands(Provider):
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
             ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
             ("Train", "Train voice from local scripts", partial(app.action_train_scripts)),
+            ("Fine-tune", "QLoRA fine-tune from scripts on the GPU", partial(app.action_finetune)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -126,6 +128,7 @@ class GladosCommands(Provider):
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
             ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
             ("Train", "Train voice from local scripts", partial(app.action_train_scripts)),
+            ("Fine-tune", "QLoRA fine-tune from scripts on the GPU", partial(app.action_finetune)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -1140,6 +1143,7 @@ class GladosUI(App[None]):
             yield Button("Interrupt: ON", id="interrupt_button")
             yield Button("Scripts", id="scripts_button")
             yield Button("Train", id="train_button")
+            yield Button("Fine-tune", id="finetune_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1284,6 +1288,19 @@ class GladosUI(App[None]):
         logger.success("Style train: {}", response)
         self.notify(response, title="Train", timeout=6)
 
+    def action_finetune(self) -> None:
+        from glados.core.finetune import write_dataset
+
+        path, count = write_dataset()
+        repo = Path.cwd()
+        command = f'cd /d "{repo}" && python -m uv run glados finetune'
+        subprocess.Popen(["cmd", "/k", command], cwd=str(repo))
+        self.notify(
+            f"Wrote {count} pairs to {path}. Fine-tune opened in a new window. Close this TUI and Ollama if VRAM is tight.",
+            title="Fine-tune",
+            timeout=8,
+        )
+
     def _reload_style_scripts_if_changed(self) -> None:
         engine = self.glados_engine_instance
         if not engine:
@@ -1385,6 +1402,9 @@ class GladosUI(App[None]):
             return
         if event.button.id == "train_button":
             self.action_train_scripts()
+            return
+        if event.button.id == "finetune_button":
+            self.action_finetune()
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""

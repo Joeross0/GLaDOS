@@ -94,6 +94,51 @@ def extract_lines(text: str) -> list[str]:
     return lines
 
 
+FINE_TUNE_SYSTEM = (
+    "You are GLaDOS. Sass first. Calm PA voice, then a petty scientific insult. "
+    "The human is a test subject. Do not break character."
+)
+
+
+def extract_pairs(text: str) -> list[dict[str, list[dict[str, str]]]]:
+    heading = "The test subject is standing in the enrichment center"
+    pairs: list[dict[str, list[dict[str, str]]]] = []
+    seen: set[str] = set()
+    for raw_line in text.splitlines():
+        stripped = WIKI_TAIL.sub("", raw_line).strip()
+        quotes = QUOTE_RE.findall(stripped or raw_line)
+        if not quotes:
+            if (
+                stripped
+                and 3 < len(stripped) < 90
+                and not STAGE_DIRECTION.match(stripped)
+                and not stripped.startswith("(")
+            ):
+                heading = stripped.rstrip(".")
+            continue
+        for match in quotes:
+            cleaned = _clean_quote(match)
+            if len(cleaned) < 8 or STAGE_DIRECTION.match(cleaned):
+                continue
+            key = f"{heading.casefold()}::{cleaned.casefold()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append(
+                {
+                    "messages": [
+                        {"role": "system", "content": FINE_TUNE_SYSTEM},
+                        {
+                            "role": "user",
+                            "content": f"Scene: {heading}. Speak to the test subject.",
+                        },
+                        {"role": "assistant", "content": cleaned},
+                    ]
+                }
+            )
+    return pairs
+
+
 def _tokenize(text: str) -> set[str]:
     return set(WORD_RE.findall(text.casefold()))
 

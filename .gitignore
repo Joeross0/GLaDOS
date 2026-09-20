@@ -171,6 +171,7 @@ data/knowledge.json
 data/style_scripts.txt
 data/scripts/
 data/style_model/
+data/finetune/
 
 # Local scratch space
 tmp/

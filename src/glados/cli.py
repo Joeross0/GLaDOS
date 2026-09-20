@@ -394,7 +394,22 @@ def main() -> int:
     say_parser.add_argument("text", type=str, help="Text for GLaDOS to speak")
     parser_add_config(say_parser)
 
+    finetune_parser = subparsers.add_parser("finetune", help="QLoRA fine-tune from local script dumps")
+    finetune_parser.add_argument("--serve", action="store_true", help="Serve a finished adapter instead of training")
+    finetune_parser.add_argument("--max-steps", type=int, default=None, help="Training step cap")
+
     args = parser.parse_args()
+
+    if args.command == "finetune":
+        from .core.finetune import run_finetune, serve_adapter
+
+        if args.serve:
+            serve_adapter()
+            return 0
+        path = run_finetune(max_steps=args.max_steps)
+        print(f"Adapter saved to {path}")
+        print("Close Ollama, then run: python -m uv run glados finetune --serve")
+        return 0
 
     if args.command == "download":
         return asyncio.run(download_models())

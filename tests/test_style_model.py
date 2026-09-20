@@ -1,4 +1,4 @@
-from glados.core.style_model import build_card, extract_lines, retrieve_lines
+from glados.core.style_model import build_card, extract_lines, extract_pairs, retrieve_lines
 
 
 SAMPLE = '''
@@ -28,6 +28,15 @@ def test_retrieve_prefers_overlap() -> None:
     picks = retrieve_lines("the floor is dangerous", lines, limit=2)
     assert picks
     assert "kill you" in picks[0].lower()
+
+
+def test_extract_pairs_uses_heading() -> None:
+    pairs = extract_pairs(SAMPLE)
+    assert pairs
+    assert pairs[0]["messages"][-1]["role"] == "assistant"
+    assert "enrichment center" in pairs[0]["messages"][-1]["content"].lower()
+    user = pairs[0]["messages"][1]["content"]
+    assert "Introduction" in user or "Scene:" in user
 
 
 def test_card_mentions_count() -> None:
