@@ -17,6 +17,28 @@ type FileName = str
 
 DEFAULT_CONFIG = resource_path("configs/glados_config.yaml")
 
+
+def _pin_speech_to_cpu_for_lora(config_paths: str | Path | list[str] | list[Path] | None) -> None:
+    """Keep ASR/TTS off the GPU when the LoRA server needs the whole card."""
+    import os
+
+    paths: list[Path]
+    if config_paths is None:
+        paths = [Path(DEFAULT_CONFIG)]
+    elif isinstance(config_paths, list):
+        paths = [Path(item) for item in config_paths]
+    else:
+        paths = [Path(config_paths)]
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if "11435" in text or "glados-lora" in text:
+            os.environ["GLADOS_ONNX_CPU"] = "1"
+            print("Speech models on CPU so the LoRA keeps the GPU.")
+            return
+
 # Details of all the models.  Each key is the file path where the model should be saved
 MODEL_DETAILS: dict[FileName, dict[FileURL, FileHash]] = {
     "models/ASR/nemo-parakeet_tdt_ctc_110m.onnx": {
@@ -226,6 +248,7 @@ def start(
         start()  # Uses default configuration file
         start("/path/to/custom/config.yaml")  # Uses a custom configuration file
     """
+    _pin_speech_to_cpu_for_lora(config_path)
     from .core.engine import Glados, GladosConfig
 
     glados_config = GladosConfig.from_yaml(config_path)
@@ -259,6 +282,8 @@ def tui(
     """
 
     import sys
+
+    _pin_speech_to_cpu_for_lora(config_paths)
 
     import glados.tui as tui
 

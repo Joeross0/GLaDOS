@@ -144,10 +144,14 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
         raise RuntimeError("No adapter yet. Run: python -m uv run glados finetune")
 
     import json
+    import time
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Thread
+    from threading import Lock, Thread
 
     import torch
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
 
@@ -166,10 +170,12 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
         if isinstance(token_id, int) and token_id not in eos_ids:
             eos_ids.append(token_id)
 
+    generate_lock = Lock()
+
     def generate_reply(messages: list[dict[str, str]], max_new_tokens: int, streamer: TextIteratorStreamer | None) -> None:
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        with torch.inference_mode():
+        with generate_lock, torch.inference_mode():
             model.generate(
                 **inputs,
                 streamer=streamer,
@@ -201,6 +207,23 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
         pass
     warm_thread.join(timeout=120)
     logger.info("READY. Talk now; the first spoken reply should not cold-start.")
+
+    def _keep_warm() -> None:
+        while True:
+            time.sleep(20)
+            try:
+                generate_reply(
+                    [
+                        {"role": "system", "content": "You are GLaDOS."},
+                        {"role": "user", "content": "ping"},
+                    ],
+                    1,
+                    None,
+                )
+            except Exception:
+                logger.exception("Keep-warm generate failed")
+
+    Thread(target=_keep_warm, daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:

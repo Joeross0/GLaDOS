@@ -287,19 +287,9 @@ class AudioTranscriber:
                 raise ValueError(f"Error parsing YAML file {config_path}: {e}") from e
 
         # 2. Configure ONNX Runtime session
-        providers = ort.get_available_providers()
+        from ..utils.onnx_providers import session_providers
 
-        # Exclude providers known to cause issues or not desired
-        if "TensorrtExecutionProvider" in providers:
-            providers.remove("TensorrtExecutionProvider")
-        if "CoreMLExecutionProvider" in providers:
-            providers.remove("CoreMLExecutionProvider")
-
-        # Prioritize CUDA if available, otherwise CPU
-        if "CUDAExecutionProvider" in providers:
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        else:
-            providers = ["CPUExecutionProvider"]
+        providers = session_providers()
 
         # Initialize the internal ONNX model handler
         self.model = _OnnxTDTModel(providers)

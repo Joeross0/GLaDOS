@@ -170,11 +170,9 @@ class Phonemizer:
         self.token_to_idx = self._load_pickle(self.config.TOKEN_TO_IDX_PATH)
         self.idx_to_token = self._load_pickle(self.config.IDX_TO_TOKEN_PATH)
 
-        providers = ort.get_available_providers()
-        if "TensorrtExecutionProvider" in providers:
-            providers.remove("TensorrtExecutionProvider")
-        if "CoreMLExecutionProvider" in providers:
-            providers.remove("CoreMLExecutionProvider")
+        from ..utils.onnx_providers import session_providers
+
+        providers = session_providers()
 
         self.ort_session = ort.InferenceSession(
             self.config.MODEL_PATH,

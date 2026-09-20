@@ -25,11 +25,9 @@ class VAD:
             - Sets up inference session with the specified model
             - Initializes internal state variables for processing audio chunks
         """
-        providers = ort.get_available_providers()
-        if "TensorrtExecutionProvider" in providers:
-            providers.remove("TensorrtExecutionProvider")
-        if "CoreMLExecutionProvider" in providers:
-            providers.remove("CoreMLExecutionProvider")
+        from ..utils.onnx_providers import session_providers
+
+        providers = session_providers()
 
         # Limit to 1 thread to prevent ONNX Runtime from spawning many threads
         # for each small inference call (~31/sec). On high core-count machines this

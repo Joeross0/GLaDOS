@@ -132,11 +132,9 @@ class SpeechSynthesizer:
             phoneme_path (Path): Path to the phoneme-to-ID mapping file. Defaults to PHONEME_TO_ID_PATH.
             speaker_id (int | None): Optional speaker ID for multi-speaker models. Defaults to None.
         """
-        providers = ort.get_available_providers()
-        if "TensorrtExecutionProvider" in providers:
-            providers.remove("TensorrtExecutionProvider")
-        if "CoreMLExecutionProvider" in providers:
-            providers.remove("CoreMLExecutionProvider")
+        from ..utils.onnx_providers import session_providers
+
+        providers = session_providers()
 
         self.ort_sess = ort.InferenceSession(
             model_path,
