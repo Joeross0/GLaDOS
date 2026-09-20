@@ -139,12 +139,25 @@ def run_finetune(
     return ADAPTER_DIR
 
 
-def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: str = BASE_MODEL) -> None:
+def serve_adapter(
+    host: str = "127.0.0.1",
+    port: int = DEFAULT_PORT,
+    model_id: str = BASE_MODEL,
+    token: str | None = None,
+) -> None:
     if not ADAPTER_DIR.is_dir():
         raise RuntimeError("No adapter yet. Run: python -m uv run glados finetune")
 
     import json
+    import os
+    import secrets
     import time
+
+    host = host or os.environ.get("GLADOS_SERVE_HOST", "127.0.0.1")
+    port = int(os.environ.get("GLADOS_SERVE_PORT", str(port)))
+    token = token or os.environ.get("GLADOS_SERVE_TOKEN")
+    if host not in {"127.0.0.1", "localhost", "::1"} and not token:
+        raise RuntimeError("Set --token or GLADOS_SERVE_TOKEN before exposing the serve port.")
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Event, Lock, Thread
 
@@ -250,6 +263,13 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
 
     Thread(target=_keep_warm, daemon=True).start()
 
+    def _authorized(handler: BaseHTTPRequestHandler) -> bool:
+        if not token:
+            return True
+        header = handler.headers.get("Authorization", "")
+        expected = f"Bearer {token}"
+        return secrets.compare_digest(header, expected)
+
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             if self.path.rstrip("/") != "/health":
@@ -265,6 +285,9 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
         def do_POST(self) -> None:
             if self.path.rstrip("/") != "/v1/chat/completions":
                 self.send_error(404)
+                return
+            if not _authorized(self):
+                self.send_error(401)
                 return
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))

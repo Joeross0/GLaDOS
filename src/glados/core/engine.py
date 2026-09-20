@@ -146,9 +146,12 @@ class GladosConfig(BaseModel):
     def _resolve_api_key_from_env(self) -> "GladosConfig":
         """Fall back to MINIMAX_API_KEY environment variable when api_key is not set."""
         if self.api_key is None:
-            env_key = os.environ.get("MINIMAX_API_KEY")
+            env_key = os.environ.get("GLADOS_API_KEY") or os.environ.get("MINIMAX_API_KEY")
             if env_key:
                 self.api_key = env_key
+        remote_url = os.environ.get("GLADOS_COMPLETION_URL")
+        if remote_url:
+            self.completion_url = HttpUrl(remote_url)
         return self
 
     @classmethod

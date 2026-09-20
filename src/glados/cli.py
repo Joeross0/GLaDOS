@@ -425,6 +425,9 @@ def main() -> int:
     finetune_parser = subparsers.add_parser("finetune", help="QLoRA fine-tune from local script dumps")
     finetune_parser.add_argument("--serve", action="store_true", help="Serve a finished adapter instead of training")
     finetune_parser.add_argument("--max-steps", type=int, default=None, help="Training step cap")
+    finetune_parser.add_argument("--host", default=None, help="Bind host for --serve (default 127.0.0.1)")
+    finetune_parser.add_argument("--port", type=int, default=None, help="Bind port for --serve (default 11435)")
+    finetune_parser.add_argument("--token", default=None, help="Bearer token required when serving on a public host")
 
     args = parser.parse_args()
 
@@ -432,7 +435,14 @@ def main() -> int:
         from .core.finetune import run_finetune, serve_adapter
 
         if args.serve:
-            serve_adapter()
+            serve_kwargs = {}
+            if args.host:
+                serve_kwargs["host"] = args.host
+            if args.port:
+                serve_kwargs["port"] = args.port
+            if args.token:
+                serve_kwargs["token"] = args.token
+            serve_adapter(**serve_kwargs)
             return 0
         path = run_finetune(max_steps=args.max_steps)
         print(f"Adapter saved to {path}")
