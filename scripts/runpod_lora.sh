@@ -23,7 +23,7 @@ if not torch.cuda.is_available():
 PY
 
 # Keep the image's CUDA torch. Only add the LoRA serve extras.
-python -m pip install -q transformers peft bitsandbytes accelerate loguru pydantic
+python -m pip install -q transformers peft bitsandbytes accelerate loguru pydantic onnxruntime
 export PYTHONPATH="${ROOT}/src${PYTHONPATH:+:$PYTHONPATH}"
 export GLADOS_SERVE_HOST="${GLADOS_SERVE_HOST:-0.0.0.0}"
 export GLADOS_SERVE_PORT="${GLADOS_SERVE_PORT:-11435}"

@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   if (!response.ok) {
     const detail = await response.text();
     return Response.json(
-      { error: `GLaDOS voice failed (${response.status}). Restart the RunPod serve so it can load glados.onnx.`, detail: detail.slice(0, 240) },
+      { error: `GLaDOS voice failed (${response.status}). On the pod run: python -m pip install onnxruntime`, detail: detail.slice(0, 240) },
       { status: 502 },
     );
   }
