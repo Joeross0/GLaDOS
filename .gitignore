@@ -168,6 +168,7 @@ cython_debug/
 
 # Local knowledge store
 data/knowledge.json
+data/style_scripts.txt
 
 # Local scratch space
 tmp/

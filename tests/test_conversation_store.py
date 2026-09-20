@@ -208,3 +208,20 @@ class TestConversationStoreThreadSafety:
         assert snapshot == [{"role": "user", "content": "Initial"}]
         # Store should be updated
         assert store.snapshot() == [{"role": "system", "content": "Replaced"}]
+
+    def test_upsert_system_by_prefix(self) -> None:
+        store = ConversationStore(
+            [
+                {"role": "system", "content": "You are GLaDOS."},
+                {"role": "user", "content": "Hello"},
+            ]
+        )
+        store.upsert_system_by_prefix("STYLE REF", "STYLE REF\nlines")
+        messages = store.snapshot()
+        assert messages[0]["content"] == "You are GLaDOS."
+        assert messages[1]["content"].startswith("STYLE REF")
+        assert messages[2]["role"] == "user"
+        store.upsert_system_by_prefix("STYLE REF", "STYLE REF\nupdated")
+        assert store.snapshot()[1]["content"] == "STYLE REF\nupdated"
+        store.upsert_system_by_prefix("STYLE REF", None)
+        assert all(not str(m.get("content", "")).startswith("STYLE REF") for m in store.snapshot())

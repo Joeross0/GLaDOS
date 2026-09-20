@@ -112,6 +112,33 @@ class ConversationStore:
             self._messages.extend(new_messages)
             self._version += 1
 
+    def upsert_system_by_prefix(self, prefix: str, content: str | None) -> None:
+        """Replace or insert a tagged system message after existing system prompts."""
+        with self._lock:
+            for i, message in enumerate(self._messages):
+                text = message.get("content")
+                if (
+                    message.get("role") == "system"
+                    and isinstance(text, str)
+                    and text.startswith(prefix)
+                ):
+                    if content is None:
+                        del self._messages[i]
+                    else:
+                        self._messages[i] = {"role": "system", "content": content}
+                    self._version += 1
+                    return
+            if content is None:
+                return
+            insert_at = 0
+            for i, message in enumerate(self._messages):
+                if message.get("role") == "system":
+                    insert_at = i + 1
+                else:
+                    break
+            self._messages.insert(insert_at, {"role": "system", "content": content})
+            self._version += 1
+
     def modify_message(
         self,
         index: int,

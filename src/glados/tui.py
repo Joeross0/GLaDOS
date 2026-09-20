@@ -19,7 +19,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from rich.markup import escape
-from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static
+from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static, TextArea
 from textual.worker import Worker, WorkerState
 
 from glados.core.engine import Glados, GladosConfig
@@ -79,6 +79,7 @@ class GladosCommands(Provider):
         tui_commands = [
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
+            ("Scripts", "Paste style scripts for GLaDOS cadence", partial(app.action_scripts)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -120,6 +121,7 @@ class GladosCommands(Provider):
         tui_commands = [
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
+            ("Scripts", "Paste style scripts for GLaDOS cadence", partial(app.action_scripts)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -630,7 +632,7 @@ class HelpScreen(ModalScreen[None]):
             "",
             "[bold]Commands[/]",
             "Use ^p to access all commands including:",
-            "  Theme, Context, Messages, Observability, Help",
+            "  Theme, Scripts, Context, Messages, Observability, Help",
             "  Mute/Unmute ASR/TTS, Reset, Autonomy, etc.",
         ]
         self.query_one("#help_text", Static).update("\n".join(lines))
@@ -712,6 +714,58 @@ class MessagesScreen(ModalScreen[None]):
         widget = self.query_one("#messages_text", Static)
         widget.markup = True
         widget.update(content)
+
+
+class ScriptFeedScreen(ModalScreen[None]):
+    """Paste reference dialogue for cadence only. Stored locally, not in git."""
+
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
+        ("escape", "app.pop_screen", "Close screen")
+    ]
+
+    TITLE = "Style Scripts"
+
+    def compose(self) -> ComposeResult:
+        with Container(id="scripts_dialog"):
+            yield Label(
+                "Paste reference dialogue. She copies cadence, not quotes. Saved only on this machine.",
+                id="scripts_hint",
+            )
+            yield TextArea(id="scripts_text")
+            with Horizontal(id="scripts_buttons"):
+                yield Button("Apply", id="scripts_apply", variant="primary")
+                yield Button("Clear", id="scripts_clear")
+                yield Button("Close", id="scripts_close")
+
+    def on_mount(self) -> None:
+        dialog = self.query_one("#scripts_dialog")
+        dialog.border_title = self.TITLE
+        dialog.border_title_align = "center"
+        dialog.border_subtitle = "Esc closes without applying"
+        area = self.query_one("#scripts_text", TextArea)
+        app = cast(GladosUI, self.app)
+        if app.glados_engine_instance:
+            area.text = app.glados_engine_instance.get_style_scripts()
+        area.focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "scripts_close":
+            self.dismiss()
+            return
+        app = cast(GladosUI, self.app)
+        if not app.glados_engine_instance:
+            app.notify("Engine not ready.", severity="warning")
+            return
+        area = self.query_one("#scripts_text", TextArea)
+        if event.button.id == "scripts_clear":
+            area.text = ""
+            response = app.glados_engine_instance.apply_style_scripts("")
+        else:
+            response = app.glados_engine_instance.apply_style_scripts(area.text)
+        logger.success("TUI scripts: {}", response)
+        app.notify(response, title="Style Scripts", timeout=4)
+        if event.button.id == "scripts_apply":
+            self.dismiss()
 
 
 class InfoScreen(ModalScreen[None]):
@@ -1123,6 +1177,7 @@ class GladosUI(App[None]):
             yield SpeechBadge(id="speech_badge")
             yield Button("Mic: System default", id="mic_button")
             yield Button("Interrupt: ON", id="interrupt_button")
+            yield Button("Scripts", id="scripts_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1242,6 +1297,11 @@ class GladosUI(App[None]):
         if not isinstance(self.screen, MicPickerScreen):
             self.push_screen(MicPickerScreen())
 
+    def action_scripts(self) -> None:
+        """Open the style-script paste box."""
+        if not isinstance(self.screen, ScriptFeedScreen):
+            self.push_screen(ScriptFeedScreen())
+
     def _mic_device_choices(self) -> list[tuple[int | None, str]]:
         engine = self.glados_engine_instance
         if engine:
@@ -1313,6 +1373,9 @@ class GladosUI(App[None]):
             response = engine.handle_command("/interrupt off" if engine.interruptible else "/interrupt on")
             self.notify(response, title="Interrupt", timeout=3)
             self._refresh_interrupt_button()
+            return
+        if event.button.id == "scripts_button":
+            self.action_scripts()
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""
