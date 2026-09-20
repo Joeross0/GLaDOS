@@ -401,12 +401,20 @@ class LanguageModelProcessor:
         sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace("  ", " ").replace(":", " ")
 
         if sentence and sentence != ".":  # Avoid sending just a period
+            if self._is_silence_reply(sentence):
+                logger.info("LLM Processor: Staying silent.")
+                return
             if self._is_repetitive_sentence(sentence):
                 logger.info("LLM Processor: Dropping repeated sentence: '{}'", sentence)
                 return
             logger.info(f"LLM Processor: Sending to TTS queue: '{sentence}'")
             self.tts_input_queue.put(sentence)
             self._spoken_this_turn.append(sentence)
+
+    @staticmethod
+    def _is_silence_reply(sentence: str) -> bool:
+        normalized = re.sub(r"[^a-z]+", " ", sentence.lower()).strip()
+        return normalized in {"silence", "do nothing", "do nothing tool", "nothing", "no action", "pass"}
 
     def _is_repetitive_sentence(self, sentence: str) -> bool:
         recent: list[str] = list(getattr(self, "_spoken_this_turn", []))
@@ -719,8 +727,15 @@ class LanguageModelProcessor:
                     "stream": True,
                     # Add other parameters like temperature, max_tokens if needed from config
                 }
+                if self._ollama_mode:
+                    data["options"] = {
+                        "temperature": 0.75,
+                        "top_p": 0.9,
+                        "num_predict": 384,
+                    }
                 if allow_tools and tools:
                     data["tools"] = tools
+                speak_autonomy_text = autonomy_mode and not tools
 
                 tool_calls_buffer: list[dict[str, Any]] = []
                 sentence_buffer: list[str] = []
@@ -778,7 +793,7 @@ class LanguageModelProcessor:
                                             if chunk:
                                                 if isinstance(chunk, list):
                                                     self._process_tool_chunks(tool_calls_buffer, chunk)
-                                                elif not autonomy_mode:
+                                                elif not autonomy_mode or speak_autonomy_text:
                                                     # Extract thinking tags before TTS (auto-detects format)
                                                     speakable, in_thinking, harmony_mode = self._extract_thinking(
                                                         chunk, in_thinking, thinking_buffer, harmony_mode
@@ -822,6 +837,7 @@ class LanguageModelProcessor:
                                 data.pop("tools", None)
                                 tools = []
                                 tool_names = set()
+                                speak_autonomy_text = autonomy_mode
                                 continue
                             if attempt < len(request_urls) - 1:
                                 logger.warning(

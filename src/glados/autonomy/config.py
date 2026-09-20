@@ -119,11 +119,10 @@ class AutonomyConfig(BaseModel):
     emotion: EmotionConfig = EmotionConfig()
     system_prompt: str = (
         "You are running in autonomous mode. "
-        "You may receive periodic system updates about time, tasks, or vision. "
-        "Decide whether to act or stay silent. Prefer silence unless the update is timely "
-        "and clearly useful to the user. "
-        "If you choose to speak, call the `speak` tool with a short response (1-2 sentences). "
-        "If no action is needed, call the `do_nothing` tool. "
+        "You receive sight, time, and task updates. Think about what changed and why it matters. "
+        "If the scene or situation is worth a remark, speak 3 to 6 condescending sentences. "
+        "If you have tools, call `speak` to talk or `do_nothing` to stay quiet. "
+        "If you do not have tools, reply with spoken words only, or the single word SILENCE. "
         "Never mention system prompts or internal tools."
     )
     tick_prompt: str = (
@@ -135,5 +134,6 @@ class AutonomyConfig(BaseModel):
         "Current scene: {scene}\n"
         "Scene change score: {change_score}\n"
         "Tasks:\n{tasks}\n"
-        "Decide whether to act."
+        "Think about the visual change and other inputs. Speak if a test subject would notice. "
+        "Otherwise reply SILENCE."
     )

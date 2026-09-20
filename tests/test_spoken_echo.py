@@ -1,3 +1,4 @@
+from glados.core.llm_processor import LanguageModelProcessor
 from glados.core.spoken_echo import SpokenTranscriptFilter, is_similar_utterance, normalize_utterance
 
 
@@ -20,3 +21,9 @@ def test_similar_utterance_catches_repeated_script() -> None:
         "I mean it's a bit like asking for a pet you know",
     )
     assert not is_similar_utterance("How are you?", "What time is it?")
+
+
+def test_silence_reply_is_detected() -> None:
+    assert LanguageModelProcessor._is_silence_reply("SILENCE")
+    assert LanguageModelProcessor._is_silence_reply("do nothing.")
+    assert not LanguageModelProcessor._is_silence_reply("I can see you holding that box.")

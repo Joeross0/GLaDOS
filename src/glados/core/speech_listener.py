@@ -184,7 +184,7 @@ class SpeechListener:
         self._buffer.append(sample)  # Automatically handles overflow
 
         if vad_confidence:
-            if self._echo_filter.should_ignore_listening():
+            if not self.interruptible and self._echo_filter.should_ignore_listening():
                 logger.debug("Ignoring microphone activity while GLaDOS is still speaking.")
                 return
             if not self.interruptible and self.currently_speaking_event.is_set():
