@@ -331,6 +331,7 @@ class Glados:
         # Initialize events for thread synchronization
         self.processing_active_event = threading.Event()  # Indicates if input processing is active (ASR + LLM + TTS + VLM)
         self.currently_speaking_event = threading.Event()  # Indicates if the assistant is currently speaking
+        self.turn_speaking_event = threading.Event()  # True for the whole spoken reply until EOS
         self.echo_filter = SpokenTranscriptFilter()
         self.shutdown_event = threading.Event()  # Event to signal shutdown of all threads
 
@@ -533,6 +534,7 @@ class Glados:
             tts_sample_rate=self._tts.sample_rate,
             shutdown_event=self.shutdown_event,
             currently_speaking_event=self.currently_speaking_event,
+            turn_speaking_event=self.turn_speaking_event,
             processing_active_event=self.processing_active_event,
             pause_time=self.PAUSE_TIME,
             tts_muted_event=self.tts_muted_event,
@@ -984,6 +986,7 @@ class Glados:
                     if component.name == "AudioPlayer":
                         self.audio_io.stop_speaking()
                         self.currently_speaking_event.clear()
+                        self.turn_speaking_event.clear()
                         break
         finally:
             self._graceful_shutdown()
@@ -1055,6 +1058,7 @@ class Glados:
             self.tts_muted_event.set()
             self.audio_io.stop_speaking()
             self.currently_speaking_event.clear()
+            self.turn_speaking_event.clear()
         else:
             self.tts_muted_event.clear()
         if self.observability_bus:

@@ -306,14 +306,44 @@ class DialogLog(RichLog):
             return DialogLine(role="You", content=event.message)
         if event.source == "tts" and event.kind == "play":
             return DialogLine(role="GLaDOS", content=event.message)
-        if event.source == "vision" and event.kind == "update":
-            return DialogLine(role="Vision", content=event.message)
+        if event.source == "tts" and event.kind == "turn_end":
+            return DialogLine(role="System", content="Finished speaking. Listening.")
         return None
 
     def _write_dialog(self, line: DialogLine) -> None:
-        colors = {"You": "cyan", "GLaDOS": "yellow", "Vision": "green"}
-        color = colors.get(line.role, "white")
-        self.write(f"[bold {color}]{line.role}[/]: {escape(line.content)}")
+        text = escape(line.content)
+        if line.role == "You":
+            self.write(f"[bold #7dd3fc]You[/] [bold #7dd3fc]{text}[/]")
+        elif line.role == "GLaDOS":
+            self.write(f"[bold #ffb000]GLaDOS[/] [#ffb000]{text}[/]")
+        else:
+            self.write(f"[dim]{line.role}: {text}[/]")
+
+
+class SpeechBadge(Static):
+    """Always-visible speaking / listening indicator."""
+
+    can_focus = False
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.markup = True
+
+    def render_speech(self, app: "GladosUI") -> None:
+        engine = app.glados_engine_instance
+        if not engine:
+            self.update("[dim] STARTING [/]")
+            self.remove_class("speaking", "listening")
+            return
+        speaking = engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set()
+        if speaking:
+            self.update("[bold black on yellow] SPEAKING [/]")
+            self.add_class("speaking")
+            self.remove_class("listening")
+        else:
+            self.update("[bold black on green] LISTENING [/]")
+            self.add_class("listening")
+            self.remove_class("speaking")
 
 
 class StatusPanel(Static):
@@ -353,7 +383,7 @@ class StatusPanel(Static):
             f"ASR: {asr}  TTS: {tts}",
             f"Autonomy: {autonomy}  Jobs: {jobs}",
             f"Vision: {vision}",
-            f"Speaking: {speaking_indicator}",
+            f"Speaking: {speaking_indicator}  {'SPEAKING' if engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set() else 'DONE / LISTENING'}",
             f"Microphone: {vad_indicator} {rms_db:5.1f} dB",
             f"Input: {mic_name}",
         ]
@@ -672,12 +702,14 @@ class MessagesScreen(ModalScreen[None]):
             for event in events:
                 if event.kind == "user_input" and event.source in {"asr", "text"}:
                     timestamp = datetime.fromtimestamp(event.timestamp).strftime("%H:%M:%S")
-                    lines.append(f"[{timestamp}] You: {event.message}")
+                    lines.append(f"[{timestamp}] [bold #7dd3fc]You[/] [#7dd3fc]{escape(event.message)}[/]")
                 elif event.source == "tts" and event.kind == "play":
                     timestamp = datetime.fromtimestamp(event.timestamp).strftime("%H:%M:%S")
-                    lines.append(f"[{timestamp}] GLaDOS: {event.message}")
+                    lines.append(f"[{timestamp}] [bold #ffb000]GLaDOS[/] [#ffb000]{escape(event.message)}[/]")
             content = "\n".join(lines) if lines else "No dialog yet."
-        self.query_one("#messages_text", Static).update(content)
+        widget = self.query_one("#messages_text", Static)
+        widget.markup = True
+        widget.update(content)
 
 
 class InfoScreen(ModalScreen[None]):
@@ -1006,6 +1038,8 @@ class GladosUI(App[None]):
     _autonomy_panel: AutonomyPanel | None = None
     _vision_panel: VisionPanel | None = None
     _mcp_panel: MCPPanel | None = None
+    _speech_badge: SpeechBadge | None = None
+    _was_speaking: bool = False
     _queue_metrics: dict[str, dict[str, float | int | None]]
     _config_paths: list[Path]
     _input_mode_override: str | None
@@ -1082,6 +1116,7 @@ class GladosUI(App[None]):
                     yield MCPPanel(id="mcp_panel")
 
         with Horizontal(id="command_bar"):
+            yield SpeechBadge(id="speech_badge")
             yield Label("Mic", id="mic_label")
             yield Select(
                 self._mic_select_options(),
@@ -1405,6 +1440,12 @@ class GladosUI(App[None]):
             self._vision_panel.render_vision(self)
         if self._mcp_panel:
             self._mcp_panel.render_mcp(self)
+        if self._speech_badge:
+            speaking = engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set()
+            self._speech_badge.render_speech(self)
+            if self._was_speaking and not speaking:
+                self.notify("GLaDOS finished speaking.", title="Listening", timeout=3)
+            self._was_speaking = speaking
 
     @property
     def queue_metrics(self) -> dict[str, dict[str, float | int | None]]:
@@ -1430,6 +1471,7 @@ class GladosUI(App[None]):
             and self._autonomy_panel is not None
             and self._vision_panel is not None
             and self._mcp_panel is not None
+            and self._speech_badge is not None
         ):
             return True
         try:
@@ -1439,6 +1481,7 @@ class GladosUI(App[None]):
             self._autonomy_panel = self.query_one("#autonomy_panel", AutonomyPanel)
             self._vision_panel = self.query_one("#vision_panel", VisionPanel)
             self._mcp_panel = self.query_one("#mcp_panel", MCPPanel)
+            self._speech_badge = self.query_one("#speech_badge", SpeechBadge)
             return True
         except NoMatches:
             return False

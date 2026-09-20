@@ -64,6 +64,24 @@ HeaderClock {
     background: $surface;
 }
 
+#speech_badge {
+    width: auto;
+    min-width: 14;
+    content-align: center middle;
+    padding: 1 1 0 1;
+    text-style: bold;
+}
+
+#speech_badge.speaking {
+    color: #111111;
+    background: $primary;
+}
+
+#speech_badge.listening {
+    color: #111111;
+    background: #7cb342;
+}
+
 #mic_label {
     width: auto;
     padding: 1 1 0 1;

@@ -34,6 +34,7 @@ class SpeechPlayer:
         interaction_state: "InteractionState | None" = None,
         observability_bus: ObservabilityBus | None = None,
         echo_filter: SpokenTranscriptFilter | None = None,
+        turn_speaking_event: threading.Event | None = None,
     ) -> None:
         self.audio_io = audio_io
         self.audio_output_queue = audio_output_queue
@@ -41,12 +42,36 @@ class SpeechPlayer:
         self.tts_sample_rate = tts_sample_rate
         self.shutdown_event = shutdown_event
         self.currently_speaking_event = currently_speaking_event
+        self.turn_speaking_event = turn_speaking_event or threading.Event()
         self.processing_active_event = processing_active_event
         self.pause_time = pause_time
         self._tts_muted_event = tts_muted_event
         self._interaction_state = interaction_state
         self._observability_bus = observability_bus
         self._echo_filter = echo_filter or SpokenTranscriptFilter()
+
+    def _begin_turn(self) -> None:
+        if self.turn_speaking_event.is_set():
+            return
+        self.turn_speaking_event.set()
+        if self._observability_bus:
+            self._observability_bus.emit(source="tts", kind="turn_start", message="Speaking")
+
+    def _end_turn(self, interrupted: bool = False) -> None:
+        was_speaking = self.turn_speaking_event.is_set() or self.currently_speaking_event.is_set()
+        self.turn_speaking_event.clear()
+        self.currently_speaking_event.clear()
+        self._echo_filter.mark_speaking(False)
+        if not was_speaking:
+            return
+        logger.success("GLaDOS finished speaking. Listening.")
+        if self._observability_bus:
+            self._observability_bus.emit(
+                source="tts",
+                kind="turn_end",
+                message="Listening",
+                meta={"interrupted": interrupted},
+            )
 
     def run(self) -> None:
         """
@@ -71,12 +96,12 @@ class SpeechPlayer:
                             {"role": "assistant", "content": " ".join(assistant_text_accumulator)}
                         )
                     assistant_text_accumulator = []
-                    self.currently_speaking_event.clear()
-                    self._echo_filter.mark_speaking(False)
+                    self._end_turn()
                     continue
 
                 if tts_muted:
                     if audio_msg.text:
+                        self._begin_turn()
                         logger.info(f"Assistant: {audio_msg.text}")
                         if self._interaction_state:
                             self._interaction_state.mark_assistant()
@@ -102,6 +127,7 @@ class SpeechPlayer:
 
                 if audio_len and audio_msg.text:  # Ensure there's audio and text
                     self.currently_speaking_event.set()  # We are about to speak
+                    self._begin_turn()
                     self._echo_filter.mark_speaking(True)
                     self._echo_filter.remember(audio_msg.text)
                     if self._interaction_state:
@@ -148,6 +174,7 @@ class SpeechPlayer:
                         ])
                         assistant_text_accumulator = []  # Reset accumulator
                         self._clear_audio_queue()
+                        self._end_turn(interrupted=True)
 
                     else:  # Playback completed normally
                         logger.success(f"AudioPlayer: Playback completed for: '{audio_msg.text}'")
