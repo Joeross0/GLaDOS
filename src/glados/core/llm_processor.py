@@ -401,7 +401,8 @@ class LanguageModelProcessor:
         """
         sentence = "".join(current_sentence_parts)
         sentence = re.sub(r"\*.*?\*|\(.*?\)", "", sentence)
-        sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace(":", " ")
+        sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace(":", ".")
+        sentence = re.sub(r"(?<=[.!?])(?=[A-Za-z])", " ", sentence)
         sentence = re.sub(
             r"\b(?:[A-Za-z]\s+){2,}[A-Za-z]\b",
             lambda match: match.group(0).replace(" ", ""),
@@ -409,24 +410,31 @@ class LanguageModelProcessor:
         )
         sentence = re.sub(r" {2,}", " ", sentence).strip()
 
-        if sentence and sentence != ".":  # Avoid sending just a period
-            if self._is_silence_reply(sentence):
+        for piece in self._split_spoken_sentences(sentence):
+            if self._is_silence_reply(piece):
                 logger.info("LLM Processor: Staying silent.")
                 self._end_thinking()
                 return
-            if self._is_glued_nonsense(sentence):
-                logger.info("LLM Processor: Dropping glued nonsense: '{}'", sentence[:120])
-                return
-            if self._is_repetitive_sentence(sentence):
-                logger.info("LLM Processor: Dropping repeated sentence: '{}'", sentence)
-                return
+            if self._is_glued_nonsense(piece):
+                logger.info("LLM Processor: Dropping glued nonsense: '{}'", piece[:120])
+                continue
+            if self._is_repetitive_sentence(piece):
+                logger.info("LLM Processor: Dropping repeated sentence: '{}'", piece)
+                continue
             if self._finetuned and len(getattr(self, "_spoken_this_turn", [])) >= 5:
                 logger.info("LLM Processor: Stopping after five spoken sentences.")
                 return
-            logger.info(f"LLM Processor: Sending to TTS queue: '{sentence}'")
+            logger.info(f"LLM Processor: Sending to TTS queue: '{piece}'")
             self._end_thinking()
-            self.tts_input_queue.put(sentence)
-            self._spoken_this_turn.append(sentence)
+            self.tts_input_queue.put(piece)
+            self._spoken_this_turn.append(piece)
+
+    @staticmethod
+    def _split_spoken_sentences(sentence: str) -> list[str]:
+        if not sentence or sentence == ".":
+            return []
+        pieces = re.split(r"(?<=[.!?])\s+", sentence)
+        return [piece.strip() for piece in pieces if piece.strip() and piece.strip() != "."]
 
     @staticmethod
     def _is_silence_reply(sentence: str) -> bool:
@@ -872,9 +880,9 @@ class LanguageModelProcessor:
                                                             self._emit_thought(f"First token in {first_token_s:.1f}s")
                                                         self._end_thinking()
                                                         sentence_buffer.append(speakable)
-                                                        if speakable.strip() in self.PUNCTUATION_SET and (
-                                                            len(sentence_buffer) < 2
-                                                            or not sentence_buffer[-2].strip().isdigit()
+                                                        joined = "".join(sentence_buffer)
+                                                        if re.search(r"[.!?]\s*$", joined) and not re.search(
+                                                            r"\d[.!?]\s*$", joined
                                                         ):
                                                             self._process_sentence_for_tts(sentence_buffer)
                                                             sentence_buffer = []

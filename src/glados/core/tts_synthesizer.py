@@ -97,7 +97,11 @@ class TextToSpeechSynthesizer:
                             },
                         )
 
-                    # Even if audio_data is empty, send the message so AudioPlayer can log/handle it
+                    if audio_data.size:
+                        pause = int(self.tts_model.sample_rate * 0.28)
+                        audio_data = np.concatenate(
+                            [audio_data, np.zeros(pause, dtype=audio_data.dtype)]
+                        )
                     self.audio_output_queue.put(AudioMessage(audio=audio_data, text=spoken_text_variant, is_eos=False))
             except queue.Empty:
                 pass  # Normal, no text to process
