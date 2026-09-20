@@ -215,16 +215,9 @@ class FastVLM:
 
         logger.info(f"Loading FastVLM from {model_dir}")
 
-        # Configure providers (same pattern as ASR)
-        providers = ort.get_available_providers()
-        for excluded in ["TensorrtExecutionProvider", "CoreMLExecutionProvider"]:
-            if excluded in providers:
-                providers.remove(excluded)
+        from ..utils.onnx_providers import session_providers
 
-        if "CUDAExecutionProvider" in providers:
-            self._providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        else:
-            self._providers = ["CPUExecutionProvider"]
+        self._providers = session_providers()
 
         session_opts = ort.SessionOptions()
         session_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
