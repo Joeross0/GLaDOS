@@ -85,6 +85,7 @@ class GladosCommands(Provider):
             ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
             ("Train", "Train voice from local scripts", partial(app.action_train_scripts)),
             ("Fine-tune", "QLoRA fine-tune from scripts on the GPU", partial(app.action_finetune)),
+            ("Nudge", "Make GLaDOS speak without talking", partial(app.action_nudge)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -129,6 +130,7 @@ class GladosCommands(Provider):
             ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
             ("Train", "Train voice from local scripts", partial(app.action_train_scripts)),
             ("Fine-tune", "QLoRA fine-tune from scripts on the GPU", partial(app.action_finetune)),
+            ("Nudge", "Make GLaDOS speak without talking", partial(app.action_nudge)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -1144,6 +1146,7 @@ class GladosUI(App[None]):
             yield Button("Scripts", id="scripts_button")
             yield Button("Train", id="train_button")
             yield Button("Fine-tune", id="finetune_button")
+            yield Button("Nudge", id="nudge_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1288,6 +1291,13 @@ class GladosUI(App[None]):
         logger.success("Style train: {}", response)
         self.notify(response, title="Train", timeout=6)
 
+    def action_nudge(self) -> None:
+        engine = self.glados_engine_instance
+        if not engine:
+            self.notify("Engine not ready.", severity="warning")
+            return
+        self.notify(engine.nudge(), title="Nudge", timeout=3)
+
     def action_finetune(self) -> None:
         from glados.core.finetune import write_dataset
 
@@ -1405,6 +1415,9 @@ class GladosUI(App[None]):
             return
         if event.button.id == "finetune_button":
             self.action_finetune()
+            return
+        if event.button.id == "nudge_button":
+            self.action_nudge()
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""

@@ -247,7 +247,7 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
             thread = Thread(
                 target=generate_reply,
-                args=(messages, 64, streamer),
+                args=(messages, 220, streamer),
                 daemon=True,
             )
             self.send_response(200)

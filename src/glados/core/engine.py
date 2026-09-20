@@ -1166,6 +1166,24 @@ class Glados:
         self.processing_active_event.set()
         return True
 
+    def nudge(self) -> str:
+        """Ask her to speak without logging a user line in the dialog."""
+        self.llm_queue_priority.put(
+            {
+                "role": "user",
+                "content": (
+                    "The test subject has not spoken. Make a chamber announcement now. "
+                    "Two to six sentences. Do not reply SILENCE."
+                ),
+                "_enqueued_at": time.time(),
+                "_lane": "priority",
+            }
+        )
+        self.processing_active_event.set()
+        if self.observability_bus:
+            self.observability_bus.emit(source="tui", kind="nudge", message="Nudge")
+        return "Nudge sent."
+
     def autonomy_inflight(self) -> int:
         return self._autonomy_inflight.value()
 
@@ -1284,6 +1302,14 @@ class Glados:
                 description="Show autonomy slots",
                 usage="/slots",
                 handler=self._cmd_slots,
+            )
+        )
+        register(
+            CommandSpec(
+                name="nudge",
+                description="Make GLaDOS speak without a user line",
+                usage="/nudge",
+                handler=lambda _args: self.nudge(),
             )
         )
         register(
