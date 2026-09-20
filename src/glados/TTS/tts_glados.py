@@ -147,6 +147,8 @@ class SpeechSynthesizer:
         try:
             # Load the configuration file
             config_file_path = model_path.with_suffix(".json")
+            if not config_file_path.exists():
+                config_file_path = model_path.with_name("glados.json")
             with open(config_file_path, encoding="utf-8") as config_file:
                 config_dict = json.load(config_file)
         except FileNotFoundError:

@@ -19,6 +19,15 @@ DATASET_PATH = OUTPUT_DIR / "train.jsonl"
 ADAPTER_DIR = OUTPUT_DIR / "adapter"
 BASE_MODEL = "cognitivecomputations/dolphin-2.9-llama3-8b"
 DEFAULT_PORT = 11435
+TTS_DOWNLOADS = (
+    ("models/TTS/glados.onnx", "https://github.com/dnhkng/GlaDOS/releases/download/0.1/glados.onnx"),
+    ("models/TTS/phomenizer_en.onnx", "https://github.com/dnhkng/GLaDOS/releases/download/0.1/phomenizer_en.onnx"),
+    ("models/TTS/glados.json", "https://raw.githubusercontent.com/dnhkng/GLaDOS/main/models/TTS/glados.json"),
+    ("models/TTS/phoneme_to_id.pkl", "https://raw.githubusercontent.com/dnhkng/GLaDOS/main/models/TTS/phoneme_to_id.pkl"),
+    ("models/TTS/lang_phoneme_dict.pkl", "https://raw.githubusercontent.com/dnhkng/GLaDOS/main/models/TTS/lang_phoneme_dict.pkl"),
+    ("models/TTS/token_to_idx.pkl", "https://raw.githubusercontent.com/dnhkng/GLaDOS/main/models/TTS/token_to_idx.pkl"),
+    ("models/TTS/idx_to_token.pkl", "https://raw.githubusercontent.com/dnhkng/GLaDOS/main/models/TTS/idx_to_token.pkl"),
+)
 
 
 def write_dataset() -> tuple[Path, int]:
@@ -283,7 +292,11 @@ def serve_adapter(
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            if self.path.rstrip("/") != "/v1/chat/completions":
+            route = self.path.split("?", 1)[0].rstrip("/")
+            if route == "/v1/audio/speech":
+                self._speak()
+                return
+            if route != "/v1/chat/completions":
                 self.send_error(404)
                 return
             if not _authorized(self):
@@ -324,6 +337,28 @@ def serve_adapter(
                 logger.info("Client dropped the stream; stopping generate.")
             thread.join(timeout=30)
 
+        def _speak(self) -> None:
+            if not _authorized(self):
+                self.send_error(401)
+                return
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+            text = str(payload.get("input") or payload.get("text") or "").strip()
+            if not text:
+                self.send_error(400)
+                return
+            try:
+                wav = _synthesize_glados_wav(text)
+            except Exception:
+                logger.exception("GLaDOS TTS failed")
+                self.send_error(500)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Length", str(len(wav)))
+            self.end_headers()
+            self.wfile.write(wav)
+
         def log_message(self, fmt: str, *args: object) -> None:
             try:
                 detail = fmt % args
@@ -335,5 +370,59 @@ def serve_adapter(
                 logger.debug("HTTP {}", detail)
 
     logger.info("Serving fine-tuned GLaDOS at http://{}:{}/v1/chat/completions", host, port)
-    logger.info("Point completion_url at that URL and set llm_model to glados-lora.")
+    logger.info("GLaDOS ONNX voice at http://{}:{}/v1/audio/speech", host, port)
     ThreadingHTTPServer((host, port), Handler).serve_forever()
+
+
+def _ensure_tts_files() -> None:
+    from urllib.request import urlretrieve
+
+    for relative, url in TTS_DOWNLOADS:
+        path = Path(relative)
+        if path.exists() and path.stat().st_size > 0:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Downloading {}", relative)
+        urlretrieve(url, path)
+    json_next_to_onnx = Path("models/TTS/glados.onnx.json")
+    source_json = Path("models/TTS/glados.json")
+    if source_json.exists() and not json_next_to_onnx.exists():
+        json_next_to_onnx.write_bytes(source_json.read_bytes())
+
+
+def _synthesize_glados_wav(text: str) -> bytes:
+    import io
+    import os
+    import wave
+
+    import numpy as np
+
+    from .text_clean import sanitize_spoken_text
+
+    cleaned = sanitize_spoken_text(text) or text
+    os.environ.setdefault("GLADOS_ONNX_CPU", "1")
+    _ensure_tts_files()
+    synthesizer = _tts_engine()
+    audio = np.asarray(synthesizer.generate_speech_audio(cleaned), dtype=np.float32).reshape(-1)
+    pcm = np.clip(audio, -1.0, 1.0)
+    pcm = (pcm * 32767.0).astype(np.int16)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(int(synthesizer.sample_rate))
+        handle.writeframes(pcm.tobytes())
+    return buffer.getvalue()
+
+
+_TTS = None
+
+
+def _tts_engine():
+    global _TTS
+    if _TTS is None:
+        from ..TTS.tts_glados import SpeechSynthesizer
+
+        _TTS = SpeechSynthesizer()
+        logger.info("Loaded the same GLaDOS ONNX voice the desktop app uses.")
+    return _TTS

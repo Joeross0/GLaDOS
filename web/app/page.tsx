@@ -57,16 +57,29 @@ export default function Page() {
     sessionStorage.setItem("glados-web-lines", JSON.stringify(lines));
   }, [lines, sid]);
 
-  const speak = useCallback((reply: string) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(reply);
-    const voices = window.speechSynthesis.getVoices();
-    utterance.voice =
-      voices.find((voice) => /zira|samantha|female|google us english/i.test(voice.name)) || voices[0] || null;
-    utterance.rate = 0.92;
-    utterance.pitch = 0.7;
-    window.speechSynthesis.speak(utterance);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const speak = useCallback(async (reply: string) => {
+    const response = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: reply }),
+    });
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      setLines((current) => [
+        ...current,
+        { role: "system", text: payload.error || "GLaDOS voice is not up on the pod yet." },
+      ]);
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    audioRef.current?.pause();
+    if (audioRef.current?.src) URL.revokeObjectURL(audioRef.current.src);
+    const player = new Audio(url);
+    audioRef.current = player;
+    await player.play();
   }, []);
 
   const ask = useCallback(
@@ -99,7 +112,7 @@ export default function Page() {
         }
         const reply = payload.text || payload.error || "No response.";
         setLines((current) => [...current, { role: "glados", text: reply }]);
-        if (payload.text) speak(reply);
+        if (payload.text) await speak(reply);
       } catch (error) {
         setLines((current) => [
           ...current,
@@ -168,7 +181,7 @@ export default function Page() {
       const recognition = (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec;
       recognition?.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      window.speechSynthesis?.cancel();
+      audioRef.current?.pause();
     };
   }, []);
 
@@ -189,7 +202,22 @@ export default function Page() {
       setScene("camera off");
       return;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (error) {
+      setLines((current) => [
+        ...current,
+        {
+          role: "system",
+          text:
+            error instanceof Error
+              ? `Camera blocked: ${error.message}`
+              : "Camera blocked by the browser.",
+        },
+      ]);
+      return;
+    }
     streamRef.current = stream;
     if (videoRef.current) {
       videoRef.current.srcObject = stream;
@@ -277,8 +305,8 @@ export default function Page() {
         </button>
       </form>
       <p className="note">
-        Voice is the browser voice, not the local GLaDOS ONNX. Two Vercel projects showed up because the first Git link
-        failed and CLI created a second app. Use this one: web-henna-pi-82.
+        Voice is the same glados.onnx model the desktop app uses, served from RunPod. Restart that serve after this
+        update. Use web-henna-pi-82, not the empty second Vercel project.
       </p>
     </main>
   );
