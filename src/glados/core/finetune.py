@@ -145,10 +145,11 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
 
     import json
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
 
     import torch
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
 
     tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR)
     quant = BitsAndBytesConfig(
@@ -160,6 +161,17 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
     model.eval()
 
     class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path.rstrip("/") != "/health":
+                self.send_error(404)
+                return
+            body = b'{"ok":true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_POST(self) -> None:
             if self.path.rstrip("/") != "/v1/chat/completions":
                 self.send_error(404)
@@ -169,16 +181,30 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             messages = payload.get("messages", [])
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-            output = model.generate(**inputs, max_new_tokens=256, do_sample=True, temperature=0.85)
-            text = tokenizer.decode(output[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
-            body = json.dumps(
-                {"choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]}
-            ).encode("utf-8")
+            streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+            thread = Thread(
+                target=model.generate,
+                kwargs={
+                    **inputs,
+                    "streamer": streamer,
+                    "max_new_tokens": 160,
+                    "do_sample": True,
+                    "temperature": 0.85,
+                },
+                daemon=True,
+            )
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            self.wfile.write(body)
+            thread.start()
+            for token in streamer:
+                chunk = json.dumps({"choices": [{"delta": {"content": token}}]})
+                self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
+                self.wfile.flush()
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            thread.join(timeout=5)
 
         def log_message(self, format: str, *args: object) -> None:
             logger.info(format, *args)

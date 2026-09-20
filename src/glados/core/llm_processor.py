@@ -230,12 +230,14 @@ class LanguageModelProcessor:
             if line.get("done_marker"):  # Handle [DONE] marker
                 return None
             elif "choices" in line:  # OpenAI format
-                delta = line.get("choices", [{}])[0].get("delta", {})
-                tool_calls = delta.get("tool_calls")
+                choice = line.get("choices", [{}])[0]
+                delta = choice.get("delta") or {}
+                message = choice.get("message") or {}
+                tool_calls = delta.get("tool_calls") or message.get("tool_calls")
                 if tool_calls:
                     return tool_calls
 
-                content = delta.get("content")
+                content = delta.get("content") or message.get("content")
                 return str(content) if content else None
             # Handle Ollama format
             else:
@@ -764,7 +766,7 @@ class LanguageModelProcessor:
                                 headers=self.prompt_headers,
                                 json=data,
                                 stream=True,
-                                timeout=30,  # Add a timeout for the request itself
+                                timeout=180,
                             ) as response:
                                 if response.status_code >= 400:
                                     response_text = response.text.strip()
