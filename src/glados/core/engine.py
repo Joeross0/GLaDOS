@@ -853,7 +853,11 @@ class Glados:
         setter = getattr(self.audio_io, "set_input_device", None)
         if not callable(setter):
             return "This audio backend does not support microphone selection."
-        setter(input_device)
+        try:
+            setter(input_device)
+        except Exception as exc:
+            logger.exception("Failed to switch microphone to {}", input_device)
+            return f"Could not switch microphone: {exc}"
         options = dict(self.audio_io_options or {})
         options["input_device"] = input_device
         self.audio_io_options = options

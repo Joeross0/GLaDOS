@@ -82,16 +82,12 @@ HeaderClock {
     background: #7cb342;
 }
 
-#mic_label {
+#mic_button {
     width: auto;
-    padding: 1 1 0 1;
-    color: $foreground;
-}
-
-#mic_select {
-    width: 42;
-    max-width: 50%;
-    margin: 0 1 0 0;
+    max-width: 42;
+    margin: 0 1 0 1;
+    min-height: 1;
+    height: 3;
 }
 
 #dialog_log.hidden,

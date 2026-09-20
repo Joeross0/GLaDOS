@@ -1,6 +1,7 @@
 """Local microphone and speaker backend implemented with sounddevice."""
 
 import queue
+import re
 import threading
 
 from loguru import logger
@@ -12,19 +13,40 @@ from . import VAD
 from .base import AudioIO
 from .resample import resample as resample_audio
 
+_HOST_PREFERENCE = {
+    "Windows WASAPI": 0,
+    "Windows WDM-KS": 1,
+    "MME": 2,
+    "Windows DirectSound": 3,
+}
+
+
+def _normalize_device_name(name: str) -> str:
+    return re.sub(r"\s+", " ", name.strip().casefold())
+
 
 def list_input_devices() -> list[tuple[int | None, str]]:
-    """Return available microphone devices as (index, label) pairs."""
+    """Return unique microphone devices as (index, label) pairs."""
     devices: list[tuple[int | None, str]] = [(None, "System default")]
     try:
+        host_apis = list(sd.query_hostapis())
         host_default = sd.default.device
         default_input = host_default[0] if isinstance(host_default, (list, tuple)) else None
+        best: dict[str, tuple[int, str, int]] = {}
         for index, info in enumerate(sd.query_devices()):
             if int(info.get("max_input_channels", 0) or 0) <= 0:
                 continue
             name = str(info.get("name", f"Device {index}"))
+            host_index = int(info.get("hostapi", 0) or 0)
+            host_name = str(host_apis[host_index].get("name", "")) if host_index < len(host_apis) else ""
+            rank = _HOST_PREFERENCE.get(host_name, 50)
+            key = _normalize_device_name(name)
+            previous = best.get(key)
+            if previous is None or rank < previous[2]:
+                best[key] = (index, name, rank)
+        for index, name, _rank in sorted(best.values(), key=lambda item: item[0]):
             suffix = " (default)" if default_input == index else ""
-            devices.append((index, f"{index}: {name}{suffix}"))
+            devices.append((index, f"{name}{suffix}"))
     except Exception as exc:
         logger.warning("Could not list audio input devices: {}", exc)
     return devices
@@ -146,10 +168,20 @@ class SoundDeviceAudioIO(AudioIO):
 
     def set_input_device(self, input_device: int | str | None) -> None:
         """Switch microphones and restart capture if it is already running."""
+        previous = self._input_device
         was_listening = self.input_stream is not None
         self._input_device = input_device
-        if was_listening:
-            self.start_listening()
+        try:
+            if was_listening:
+                self.start_listening()
+        except Exception:
+            self._input_device = previous
+            if was_listening:
+                try:
+                    self.start_listening()
+                except Exception:
+                    logger.exception("Failed to restore the previous microphone after a switch error.")
+            raise
         logger.success("Microphone set to {}", input_device if input_device is not None else "system default")
 
     def start_speaking(self, audio_data: NDArray[np.float32], sample_rate: int | None = None, text: str = "") -> None:

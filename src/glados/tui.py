@@ -19,7 +19,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from rich.markup import escape
-from textual.widgets import Footer, Header, Input, Label, OptionList, RichLog, Select, Static
+from textual.widgets import Button, Footer, Header, Input, Label, OptionList, RichLog, Static
 from textual.worker import Worker, WorkerState
 
 from glados.core.engine import Glados, GladosConfig
@@ -1073,7 +1073,6 @@ class GladosUI(App[None]):
         self._theme_override = theme
         self._active_theme = None
         self._queue_metrics = {}
-        self._syncing_mic = False
 
     def compose(self) -> ComposeResult:
         """
@@ -1117,13 +1116,7 @@ class GladosUI(App[None]):
 
         with Horizontal(id="command_bar"):
             yield SpeechBadge(id="speech_badge")
-            yield Label("Mic", id="mic_label")
-            yield Select(
-                self._mic_select_options(),
-                id="mic_select",
-                allow_blank=False,
-                prompt="Microphone",
-            )
+            yield Button("Mic: System default", id="mic_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1251,12 +1244,6 @@ class GladosUI(App[None]):
 
         return list_input_devices()
 
-    def _mic_select_options(self) -> list[tuple[str, str]]:
-        options: list[tuple[str, str]] = []
-        for index, label in self._mic_device_choices():
-            options.append((label, "default" if index is None else str(index)))
-        return options or [("System default", "default")]
-
     def _current_mic_label(self) -> str:
         current = None
         if self.glados_engine_instance:
@@ -1282,7 +1269,7 @@ class GladosUI(App[None]):
         response = self.glados_engine_instance.set_input_device(device)
         logger.success("TUI microphone: {}", response)
         self.notify(response, title="Microphone", timeout=3)
-        self._sync_mic_select()
+        self._refresh_mic_button()
 
     def _apply_mic_label(self, label: str) -> None:
         for index, device_label in self._mic_device_choices():
@@ -1291,31 +1278,16 @@ class GladosUI(App[None]):
                 return
         self.notify(f"Unknown microphone: {label}", severity="warning")
 
-    def _sync_mic_select(self) -> None:
+    def _refresh_mic_button(self) -> None:
         try:
-            selector = self.query_one("#mic_select", Select)
+            button = self.query_one("#mic_button", Button)
         except NoMatches:
             return
-        options = self._mic_select_options()
-        current = "default"
-        if self.glados_engine_instance:
-            device = self.glados_engine_instance.get_input_device()
-            current = "default" if device is None else str(device)
-        self._syncing_mic = True
-        try:
-            selector.set_options(options)
-            selector.value = current
-        except Exception:
-            selector.set_options(options)
-        finally:
-            self._syncing_mic = False
+        button.label = f"Mic: {self._current_mic_label()}"
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id != "mic_select" or self._syncing_mic:
-            return
-        if event.value is Select.BLANK:
-            return
-        self._apply_mic_value(str(event.value))
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "mic_button":
+            self.action_mic_picker()
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""
@@ -1358,7 +1330,7 @@ class GladosUI(App[None]):
             if self.glados_engine_instance is not None:
                 self.glados_engine_instance.play_announcement()
                 self.start_glados()
-                self._sync_mic_select()
+                self._refresh_mic_button()
             self.focus_command_input()
         elif message.state == WorkerState.ERROR:
             worker = message.worker
@@ -1446,6 +1418,7 @@ class GladosUI(App[None]):
             if self._was_speaking and not speaking:
                 self.notify("GLaDOS finished speaking.", title="Listening", timeout=3)
             self._was_speaking = speaking
+        self._refresh_mic_button()
 
     @property
     def queue_metrics(self) -> dict[str, dict[str, float | int | None]]:
