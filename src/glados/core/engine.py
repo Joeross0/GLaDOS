@@ -50,6 +50,7 @@ from .text_listener import TextListener
 from .tool_executor import ToolExecutor
 from .tts_synthesizer import TextToSpeechSynthesizer
 from .memory_context import MemoryContext
+from ..utils.workers import cpu_count, resolve_worker_count
 
 try:
     logger.remove(0)
@@ -291,6 +292,17 @@ class Glados:
         self._conversation_store = ConversationStore(initial_messages=list(personality_preprompt))
         self.vision_config = vision_config
         self.autonomy_config = autonomy_config or AutonomyConfig()
+        self.autonomy_worker_count = (
+            resolve_worker_count(self.autonomy_config.autonomy_parallel_calls) if self.autonomy_config.enabled else 0
+        )
+        self.task_worker_count = max(4, self.autonomy_worker_count // 2) if self.autonomy_config.enabled else 2
+        if self.autonomy_config.enabled:
+            logger.success(
+                "Worker budget: {} autonomy LLM, {} background tasks ({} logical CPUs)",
+                self.autonomy_worker_count,
+                self.task_worker_count,
+                cpu_count(),
+            )
         self.portal_config = portal_config
         self.vision_state: VisionState | None = VisionState() if self.vision_config else None
         self.vision_request_queue: queue.Queue | None = queue.Queue() if self.vision_config else None
@@ -344,7 +356,11 @@ class Glados:
         if self.autonomy_config.enabled:
             self.autonomy_event_bus = EventBus()
             self.autonomy_slots = TaskSlotStore(observability_bus=self.observability_bus)
-            self.autonomy_tasks = TaskManager(self.autonomy_slots, self.autonomy_event_bus)
+            self.autonomy_tasks = TaskManager(
+                self.autonomy_slots,
+                self.autonomy_event_bus,
+                max_workers=self.task_worker_count,
+            )
             # Register slots with context builder
             self.context_builder.register("slots", lambda: self._format_slots(), priority=8)
             if self.autonomy_config.jobs.enabled:
@@ -467,7 +483,7 @@ class Glados:
         self.autonomy_llm_processors: list[LanguageModelProcessor] = []
         autonomy_parallel_calls = 0
         if self.autonomy_config.enabled:
-            autonomy_parallel_calls = max(0, self.autonomy_config.autonomy_parallel_calls)
+            autonomy_parallel_calls = self.autonomy_worker_count
         for _ in range(autonomy_parallel_calls):
             self.autonomy_llm_processors.append(
                 LanguageModelProcessor(
@@ -1325,7 +1341,8 @@ class Glados:
             f"tts_muted={self.tts_muted_event.is_set()}, "
             f"autonomy_enabled={autonomy_enabled}, "
             f"vision_enabled={vision_enabled}, "
-            f"jobs_enabled={jobs_enabled}"
+            f"jobs_enabled={jobs_enabled}, "
+            f"workers={self.autonomy_worker_count}/{self.task_worker_count}"
         )
 
     def _cmd_quit(self, _args: list[str]) -> str:
@@ -1543,7 +1560,7 @@ class Glados:
         if not args:
             return (
                 f"Autonomy enabled={self.autonomy_config.enabled}, "
-                f"parallel_calls={self.autonomy_config.autonomy_parallel_calls}, "
+                f"parallel_calls={self.autonomy_worker_count}, "
                 f"coalesce_ticks={self.autonomy_config.coalesce_ticks}"
             )
         head = args[0].lower()

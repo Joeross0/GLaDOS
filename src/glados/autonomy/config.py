@@ -111,7 +111,7 @@ class AutonomyConfig(BaseModel):
     enabled: bool = False
     tick_interval_s: float = 10.0
     cooldown_s: float = 20.0
-    autonomy_parallel_calls: conint(ge=1, le=16) = 2
+    autonomy_parallel_calls: conint(ge=0, le=32) = 0
     autonomy_queue_max: int | None = None
     coalesce_ticks: bool = True
     jobs: AutonomyJobsConfig = AutonomyJobsConfig()

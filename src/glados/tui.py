@@ -460,7 +460,7 @@ class AutonomyPanel(Static):
             return
         enabled = "[green]ON[/]" if engine.autonomy_config.enabled else "[red]OFF[/]"
         coalesce = "ON" if engine.autonomy_config.coalesce_ticks else "OFF"
-        workers = engine.autonomy_config.autonomy_parallel_calls if engine.autonomy_config.enabled else 0
+        workers = engine.autonomy_worker_count if engine.autonomy_config.enabled else 0
         inflight = engine.autonomy_inflight()
         queue_depth = engine.llm_queue_autonomy.qsize()
         jobs = "ON" if engine.autonomy_config.jobs.enabled else "OFF"

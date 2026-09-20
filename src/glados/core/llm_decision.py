@@ -30,10 +30,15 @@ import httpx
 from loguru import logger
 from pydantic import BaseModel
 
+from ..utils.workers import recommended_worker_count
+
 T = TypeVar("T", bound=BaseModel)
 
 # Shared executor for sync→async bridging
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm_decide")
+_executor = ThreadPoolExecutor(
+    max_workers=recommended_worker_count(floor=4, ceiling=12),
+    thread_name_prefix="llm_decide",
+)
 
 
 @dataclass

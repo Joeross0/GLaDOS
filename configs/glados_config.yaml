@@ -19,7 +19,7 @@ Glados:
     enabled: true
     tick_interval_s: 10
     cooldown_s: 60
-    autonomy_parallel_calls: 2
+    autonomy_parallel_calls: 0
     autonomy_queue_max: null
     coalesce_ticks: true
     jobs:
