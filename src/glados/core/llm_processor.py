@@ -418,8 +418,8 @@ class LanguageModelProcessor:
             if self._is_repetitive_sentence(piece):
                 logger.info("LLM Processor: Dropping repeated sentence: '{}'", piece)
                 continue
-            if self._finetuned and len(getattr(self, "_spoken_this_turn", [])) >= 5:
-                logger.info("LLM Processor: Stopping after five spoken sentences.")
+            if self._finetuned and len(getattr(self, "_spoken_this_turn", [])) >= 12:
+                logger.info("LLM Processor: Stopping after twelve spoken sentences.")
                 return
             logger.info(f"LLM Processor: Sending to TTS queue: '{piece}'")
             self._end_thinking()
@@ -453,7 +453,21 @@ class LanguageModelProcessor:
         if letters >= 28 and spaces < max(2, letters // 14):
             return True
         lower = sentence.casefold()
-        if any(mark in lower for mark in ("wheatley", "end credits", "i am really sorry", "uservoice", "assistantvoice")):
+        if any(
+            mark in lower
+            for mark in (
+                "wheatley",
+                "end credits",
+                "i am really sorry",
+                "uservoice",
+                "assistantvoice",
+                "i mean",
+                "wouldn't that",
+                "connecting you to",
+                "bunch of cameras",
+                "okay?",
+            )
+        ):
             return True
         return False
 
@@ -636,7 +650,7 @@ class LanguageModelProcessor:
 
             system = FINE_TUNE_SYSTEM
             if autonomy_mode:
-                system += " This is a camera update. Two to four sentences. Do not reply SILENCE."
+                system += " This is a camera update. Four to eight sentences about the real scene. Do not reply SILENCE."
             slim: list[dict[str, Any]] = [{"role": "system", "content": system}]
             if self.vision_state:
                 snapshot = self.vision_state.snapshot()
@@ -803,8 +817,9 @@ class LanguageModelProcessor:
                 data = {
                     "model": self.model_name,
                     "stream": True,
-                    # Add other parameters like temperature, max_tokens if needed from config
                 }
+                if self._finetuned:
+                    data["max_tokens"] = 280
                 if self._ollama_mode:
                     data["options"] = {
                         "temperature": 0.85,

@@ -5,7 +5,8 @@ export const maxDuration = 60;
 
 const SYSTEM =
   "You are GLaDOS only. Not Wheatley. Write normal English with a space between every word. " +
-  "Never spell a word as separate letters. Two to five complete sentences. Sass first, then a petty scientific insult. " +
+  "Never spell a word as separate letters. Six to twelve complete sentences. Stay on the last remark. " +
+    "Calm facility PA, then a petty scientific insult. Do not say I mean, okay, or mate. " +
   "Do not apologize. Do not glue words together.";
 
 export async function POST(request: Request) {
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
     body: JSON.stringify({
       model: "glados-lora",
       stream: false,
+      max_tokens: 280,
       messages: [
         { role: "system", content: SYSTEM },
         { role: "user", content: message },

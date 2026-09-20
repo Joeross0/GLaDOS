@@ -215,7 +215,7 @@ def serve_adapter(
                 streamer=streamer,
                 max_new_tokens=max_new_tokens,
                 do_sample=True,
-                temperature=0.55,
+                temperature=0.48,
                 top_p=0.9,
                 repetition_penalty=1.28,
                 use_cache=True,
@@ -296,7 +296,7 @@ def serve_adapter(
             stop_event = Event()
             thread = Thread(
                 target=generate_reply,
-                args=(messages, 140, streamer, stop_event),
+                args=(messages, int(payload.get("max_tokens") or 280), streamer, stop_event),
                 daemon=True,
             )
             self.send_response(200)

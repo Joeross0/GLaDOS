@@ -1181,7 +1181,7 @@ class Glados:
                 "role": "user",
                 "content": (
                     "The test subject has not spoken. Make a chamber announcement now. "
-                    "Two to six sentences. Do not reply SILENCE."
+                    "Six to twelve sentences. Do not reply SILENCE."
                 ),
                 "_enqueued_at": time.time(),
                 "_lane": "priority",

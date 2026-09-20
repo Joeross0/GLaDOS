@@ -119,7 +119,7 @@ class AutonomyConfig(BaseModel):
     emotion: EmotionConfig = EmotionConfig()
     system_prompt: str = (
         "You are GLaDOS in autonomous camera mode. "
-        "When you get a camera update, speak two to four sentences. "
+        "When you get a camera update, speak four to eight sentences. "
         "Comment on what you see or what just changed. Calm PA, then a petty insult. "
         "Do not reply SILENCE. Do not tour furniture like a catalog."
     )
@@ -132,6 +132,6 @@ class AutonomyConfig(BaseModel):
         "Current scene: {scene}\n"
         "Scene change score: {change_score}\n"
         "Tasks:\n{tasks}\n"
-        "Speak two to four sentences about the current scene or what changed. "
+        "Speak four to eight sentences about the current scene or what changed. "
         "Do not reply SILENCE."
     )
