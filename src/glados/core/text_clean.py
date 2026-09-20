@@ -33,8 +33,14 @@ def sanitize_spoken_text(text: str) -> str:
     cleaned = collapse_spaced_letters(text)
     cleaned = _SINGLE_LETTER_RUN.sub(lambda match: re.sub(r"\s+", "", match.group(0)), cleaned)
     cleaned = cleaned.replace("\n", " ").replace("\r", " ")
-    cleaned = re.sub(r"\s+([,.!?;:])", r"\1", cleaned)
+    # ASCII dashes are invisible to this voice; commas actually pause.
+    cleaned = re.sub(r"\s*[—–−\-]{1,3}\s*", ", ", cleaned)
+    cleaned = re.sub(r"\s*;\s*", ". ", cleaned)
+    cleaned = re.sub(r"\s*:\s*", ", ", cleaned)
+    cleaned = _insert_clause_commas(cleaned)
+    cleaned = re.sub(r"\s+([,.!?])", r"\1", cleaned)
     cleaned = re.sub(r"([.!?])([A-Za-z])", r"\1 \2", cleaned)
+    cleaned = re.sub(r",,+", ",", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     for pattern, replacement in _CONTRACTIONS:
         cleaned = pattern.sub(replacement, cleaned)
@@ -43,6 +49,26 @@ def sanitize_spoken_text(text: str) -> str:
     if _looks_like_keysmash(cleaned):
         return ""
     return cleaned
+
+
+def _insert_clause_commas(text: str) -> str:
+    """Add a comma before a late conjunction so the line is not one breath."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    out: list[str] = []
+    for sentence in sentences:
+        if "," in sentence or len(sentence.split()) < 10:
+            out.append(sentence)
+            continue
+        out.append(
+            re.sub(
+                r"^((?:\S+\s+){4,}\S+)\s+(and|but|so|because|though|which|while)\b",
+                r"\1, \2",
+                sentence,
+                count=1,
+                flags=re.I,
+            )
+        )
+    return " ".join(out)
 
 
 def _capitalize_sentences(text: str) -> str:

@@ -431,6 +431,14 @@ class LanguageModelProcessor:
         if not sentence or sentence == ".":
             return []
         pieces = re.split(r"(?<=[.!?])\s+", sentence)
+        broken: list[str] = []
+        for piece in pieces:
+            words = piece.split()
+            if "," in piece and len(words) >= 10:
+                broken.extend(part.strip() for part in re.split(r"(?<=,)\s+", piece) if part.strip())
+            else:
+                broken.append(piece)
+        pieces = broken
         return [piece.strip() for piece in pieces if piece.strip() and piece.strip() != "."]
 
     @staticmethod

@@ -158,6 +158,10 @@ class SpeechSynthesizer:
                 f"An unexpected error occurred while reading the configuration at path: {config_file_path}. Error: {e}"
             ) from e
         self.config = PiperConfig.from_dict(config_dict)
+        # A little slower and less flat so commas land and she sounds less dead.
+        self.config.length_scale = max(self.config.length_scale, 1.12)
+        self.config.noise_scale = max(self.config.noise_scale, 0.8)
+        self.config.noise_w = max(self.config.noise_w, 0.95)
         self.sample_rate = self.config.sample_rate
         self.speaker_id = (
             self.config.speaker_id_map.get(str(speaker_id), 0)
