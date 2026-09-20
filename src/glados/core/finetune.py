@@ -182,14 +182,22 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
             streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+            eos_ids = [tokenizer.eos_token_id]
+            for name in ("<|im_end|>", "<|im_start|>", "<|eot_id|>"):
+                token_id = tokenizer.convert_tokens_to_ids(name)
+                if isinstance(token_id, int) and token_id not in eos_ids:
+                    eos_ids.append(token_id)
             thread = Thread(
                 target=model.generate,
                 kwargs={
                     **inputs,
                     "streamer": streamer,
-                    "max_new_tokens": 160,
+                    "max_new_tokens": 120,
                     "do_sample": True,
-                    "temperature": 0.85,
+                    "temperature": 0.7,
+                    "repetition_penalty": 1.15,
+                    "eos_token_id": eos_ids,
+                    "pad_token_id": tokenizer.pad_token_id or tokenizer.eos_token_id,
                 },
                 daemon=True,
             )
@@ -198,7 +206,17 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             thread.start()
+            leaked = False
             for token in streamer:
+                if leaked:
+                    continue
+                lower = token.casefold()
+                if any(mark in lower for mark in ("<|im_start|>", "<|im_end|>", "uservoice", "assistantvoice")):
+                    leaked = True
+                    continue
+                if token.strip().casefold() in {"user", "assistant", "system"}:
+                    leaked = True
+                    continue
                 chunk = json.dumps({"choices": [{"delta": {"content": token}}]})
                 self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
                 self.wfile.flush()

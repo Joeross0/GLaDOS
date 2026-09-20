@@ -96,6 +96,7 @@ class LanguageModelProcessor:
         self.thinking_event = thinking_event
         self._style_model_provider = style_model_provider
         self._ollama_mode = self._is_ollama_endpoint()
+        self._finetuned = "11435" in str(self.completion_url) or "glados-lora" in self.model_name.lower()
         self._spoken_this_turn: list[str] = []
 
         self.prompt_headers = {"Content-Type": "application/json"}
@@ -572,6 +573,19 @@ class LanguageModelProcessor:
     def _build_messages(self, autonomy_mode: bool) -> list[dict[str, Any]]:
         """Build the message list for the LLM request, injecting context from registered sources."""
         messages = self._conversation_store.snapshot()
+        if self._finetuned and not autonomy_mode:
+            last_user = ""
+            for message in reversed(messages):
+                if message.get("role") == "user":
+                    last_user = str(message.get("content", "")).strip()
+                    if last_user:
+                        break
+            from .style_model import FINE_TUNE_SYSTEM
+
+            slim = [{"role": "system", "content": FINE_TUNE_SYSTEM}]
+            if last_user:
+                slim.append({"role": "user", "content": last_user})
+            return slim
         extra_messages: list[dict[str, Any]] = []
 
         if autonomy_mode and self.autonomy_system_prompt:
@@ -715,7 +729,11 @@ class LanguageModelProcessor:
                 allow_tools = bool(llm_input.get("_allow_tools", True))
                 with self._models_without_tools_lock:
                     model_rejects_tools = self.model_name in self._MODELS_WITHOUT_TOOLS
-                tools = self._build_tools(autonomy_mode) if allow_tools and not model_rejects_tools else []
+                tools = (
+                    self._build_tools(autonomy_mode)
+                    if allow_tools and not model_rejects_tools and not self._finetuned
+                    else []
+                )
                 tool_names = {
                     tool.get("function", {}).get("name", "")
                     for tool in tools
