@@ -90,10 +90,12 @@ class AutonomyLoop:
     def _should_skip(self, event: object) -> bool:
         if self._currently_speaking_event.is_set():
             return True
+        if isinstance(event, TimeTickEvent):
+            return True
         if isinstance(event, VisionUpdateEvent):
-            if event.change_score < 0.12:
+            if event.change_score < 0.35:
                 return True
-            return (time.time() - self._last_prompt_ts) < 8
+            return (time.time() - self._last_prompt_ts) < 45
         if self._config.cooldown_s <= 0:
             return False
         return (time.time() - self._last_prompt_ts) < self._config.cooldown_s
