@@ -1,8 +1,19 @@
 "use client";
 
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 type Line = { role: "you" | "glados" | "system"; text: string };
+type Detector = { detect: (video: HTMLVideoElement) => Promise<{ class: string; score: number }[]> };
+
+const SESSION_KEY = "glados-web-session";
+
+function sessionId(): string {
+  const existing = sessionStorage.getItem(SESSION_KEY);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  sessionStorage.setItem(SESSION_KEY, created);
+  return created;
+}
 
 export default function Page() {
   const [lines, setLines] = useState<Line[]>([
@@ -10,52 +21,246 @@ export default function Page() {
   ]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [scene, setScene] = useState("camera off");
+  const [sid, setSid] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<Detector | null>(null);
+  const lastSceneRef = useRef("");
+  const busyRef = useRef(false);
+  const linesRef = useRef(lines);
+
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  useEffect(() => {
+    setSid(sessionId());
+    const saved = sessionStorage.getItem("glados-web-lines");
+    if (saved) {
+      try {
+        setLines(JSON.parse(saved) as Line[]);
+      } catch {
+        /* keep default */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!sid) return;
+    sessionStorage.setItem("glados-web-lines", JSON.stringify(lines));
+  }, [lines, sid]);
+
+  const speak = useCallback((reply: string) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(reply);
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice =
+      voices.find((voice) => /zira|samantha|female|google us english/i.test(voice.name)) || voices[0] || null;
+    utterance.rate = 0.92;
+    utterance.pitch = 0.7;
+    window.speechSynthesis.speak(utterance);
+  }, []);
+
+  const ask = useCallback(
+    async (message: string, camera = false, vision = "") => {
+      if (!message || busyRef.current) return;
+      setBusy(true);
+      if (!camera) {
+        setLines((current) => [...current, { role: "you", text: message }]);
+      } else {
+        setLines((current) => [...current, { role: "system", text: `Camera: ${vision || message}` }]);
+      }
+      try {
+        const history = linesRef.current
+          .filter((line) => line.role === "you" || line.role === "glados")
+          .map((line) => ({
+            role: line.role === "you" ? "user" : "assistant",
+            content: line.text,
+          }));
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history, vision, camera, sessionId: sessionStorage.getItem(SESSION_KEY) }),
+        });
+        const raw = await response.text();
+        let payload: { text?: string; error?: string } = {};
+        try {
+          payload = raw ? (JSON.parse(raw) as { text?: string; error?: string }) : {};
+        } catch {
+          payload = { error: raw.slice(0, 200) || "Empty reply from the web API." };
+        }
+        const reply = payload.text || payload.error || "No response.";
+        setLines((current) => [...current, { role: "glados", text: reply }]);
+        if (payload.text) speak(reply);
+      } catch (error) {
+        setLines((current) => [
+          ...current,
+          { role: "system", text: error instanceof Error ? error.message : "Request failed." },
+        ]);
+      } finally {
+        setBusy(false);
+        requestAnimationFrame(() => {
+          logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+        });
+      }
+    },
+    [speak],
+  );
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     const message = text.trim();
-    if (!message || busy) return;
+    if (!message) return;
     setText("");
-    setLines((current) => [...current, { role: "you", text: message }]);
-    setBusy(true);
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
-      });
-      const payload = (await response.json()) as { text?: string; error?: string };
-      const reply = payload.text || payload.error || "No response.";
-      setLines((current) => [...current, { role: "glados", text: reply }]);
-    } catch (error) {
-      setLines((current) => [
-        ...current,
-        { role: "system", text: error instanceof Error ? error.message : "Request failed." },
-      ]);
-    } finally {
-      setBusy(false);
-      requestAnimationFrame(() => {
-        logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-      });
+    await ask(message, false, scene);
+  }
+
+  function toggleListen() {
+    const Speech =
+      window.SpeechRecognition ||
+      (window as typeof window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
+    if (!Speech) {
+      setLines((current) => [...current, { role: "system", text: "This browser has no speech recognition. Use Chrome." }]);
+      return;
     }
+    if (listening) {
+      (window as unknown as { _gladosRec?: SpeechRecognition })._gladosRec?.stop();
+      setListening(false);
+      return;
+    }
+    const recognition = new Speech();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const transcript = Array.from(event.results)
+        .slice(event.resultIndex)
+        .map((result) => result[0].transcript)
+        .join(" ")
+        .trim();
+      if (transcript) void ask(transcript, false, scene);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.onend = () => setListening(false);
+    recognition.start();
+    setListening(true);
+    (window as unknown as { _gladosRec?: SpeechRecognition })._gladosRec = recognition;
+  }
+
+  useEffect(() => {
+    return () => {
+      const recognition = (window as unknown as { _gladosRec?: SpeechRecognition })._gladosRec;
+      recognition?.stop();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  async function loadDetector(): Promise<Detector> {
+    if (detectorRef.current) return detectorRef.current;
+    await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js");
+    await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
+    const coco = (window as unknown as { cocoSsd: { load: () => Promise<Detector> } }).cocoSsd;
+    detectorRef.current = await coco.load();
+    return detectorRef.current;
+  }
+
+  async function toggleCamera() {
+    if (cameraOn) {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setCameraOn(false);
+      setScene("camera off");
+      return;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+    }
+    setCameraOn(true);
+    try {
+      await loadDetector();
+    } catch {
+      setLines((current) => [...current, { role: "system", text: "Camera is on. Object labels failed to load." }]);
+    }
+  }
+
+  useEffect(() => {
+    if (!cameraOn) return;
+    const timer = window.setInterval(async () => {
+      const video = videoRef.current;
+      const detector = detectorRef.current;
+      if (!video || video.readyState < 2) return;
+      let labels = "live camera feed";
+      if (detector) {
+        const hits = await detector.detect(video);
+        labels =
+          hits
+            .filter((hit) => hit.score > 0.45)
+            .map((hit) => hit.class)
+            .slice(0, 6)
+            .join(", ") || "empty room";
+      }
+      setScene(labels);
+      if (labels !== lastSceneRef.current && !busyRef.current) {
+        lastSceneRef.current = labels;
+        void ask(`Camera update. I see: ${labels}`, true, labels);
+      }
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [ask, cameraOn]);
+
+  function newSession() {
+    sessionStorage.removeItem(SESSION_KEY);
+    sessionStorage.removeItem("glados-web-lines");
+    window.location.reload();
   }
 
   return (
     <main>
-      <h1>GLaDOS // enrichment center terminal</h1>
-      <div className="log" ref={logRef}>
-        {lines.map((line, index) => (
-          <p key={`${line.role}-${index}`} className={`line ${line.role === "you" ? "you" : ""}`}>
-            {line.role === "you" ? "You" : line.role === "glados" ? "GLaDOS" : "System"}: {line.text}
-          </p>
-        ))}
+      <header>
+        <h1>GLaDOS // enrichment center terminal</h1>
+        <p className="note">Session {sid.slice(0, 8) || "..."} — separate from the desktop TUI</p>
+      </header>
+      <div className="stage">
+        <aside>
+          <video ref={videoRef} muted playsInline />
+          <p className="note">{scene}</p>
+          <div className="toolbar">
+            <button type="button" onClick={() => void toggleCamera()}>
+              {cameraOn ? "Camera off" : "Camera on"}
+            </button>
+            <button type="button" onClick={toggleListen} disabled={busy}>
+              {listening ? "Mic off" : "Mic on"}
+            </button>
+            <button type="button" onClick={newSession}>
+              New session
+            </button>
+          </div>
+        </aside>
+        <div className="log" ref={logRef}>
+          {lines.map((line, index) => (
+            <p key={`${line.role}-${index}`} className={`line ${line.role === "you" ? "you" : ""}`}>
+              {line.role === "you" ? "You" : line.role === "glados" ? "GLaDOS" : "System"}: {line.text}
+            </p>
+          ))}
+        </div>
       </div>
-      <form onSubmit={onSubmit}>
+      <form onSubmit={(event) => void onSubmit(event)}>
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={busy ? "Thinking..." : "Type a message"}
+          placeholder={busy ? "Thinking..." : "Type or use the mic"}
           disabled={busy}
           autoFocus
         />
@@ -63,7 +268,42 @@ export default function Page() {
           Send
         </button>
       </form>
-      <p className="note">Text only. Voice and camera stay on your PC. The model is whatever RunPod URL is set on Vercel.</p>
+      <p className="note">
+        Voice is the browser voice, not the local GLaDOS ONNX. Two Vercel projects showed up because the first Git link
+        failed and CLI created a second app. Use this one: web-henna-pi-82.
+      </p>
     </main>
   );
+}
+
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const found = document.querySelector(`script[src="${src}"]`);
+    if (found) {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+declare class SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: { 0: { transcript: string } }[];
 }

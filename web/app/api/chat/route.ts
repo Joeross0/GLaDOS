@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { completeOnRunPod } from "@/lib/runpod";
 import { sanitizeSpokenText } from "@/lib/sanitize";
 
 export const maxDuration = 60;
@@ -6,51 +7,46 @@ export const maxDuration = 60;
 const SYSTEM =
   "You are GLaDOS only. Not Wheatley. Write normal English with a space between every word. " +
   "Never spell a word as separate letters. Six to twelve complete sentences. Stay on the last remark. " +
-    "Calm facility PA, then a petty scientific insult. Do not say I mean, okay, or mate. " +
-  "Do not apologize. Do not glue words together.";
+  "Calm facility PA, then a petty scientific insult. Do not say I mean, okay, or mate. " +
+  "Do not apologize. Do not glue words together. This web session is separate from any desktop session.";
+
+type ChatTurn = { role?: string; content?: string };
 
 export async function POST(request: Request) {
-  const completionUrl = process.env.GLADOS_COMPLETION_URL;
-  const apiKey = process.env.GLADOS_API_KEY;
-  if (!completionUrl) {
-    return NextResponse.json({ error: "GLADOS_COMPLETION_URL is not set on Vercel." }, { status: 500 });
-  }
+  const body = (await request.json()) as {
+    message?: string;
+    vision?: string;
+    history?: ChatTurn[];
+    camera?: boolean;
+  };
 
-  const body = (await request.json()) as { message?: string };
   const message = (body.message || "").trim();
   if (!message) {
     return NextResponse.json({ error: "Say something." }, { status: 400 });
   }
 
-  const response = await fetch(completionUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: "glados-lora",
-      stream: false,
-      max_tokens: 280,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: message },
-      ],
-    }),
-  });
+  const history = (body.history || [])
+    .filter((turn) => (turn.role === "user" || turn.role === "assistant") && turn.content)
+    .slice(-12)
+    .map((turn) => ({ role: turn.role as string, content: String(turn.content).slice(0, 900) }));
 
-  if (!response.ok) {
-    const detail = await response.text();
-    return NextResponse.json(
-      { error: `RunPod refused the request (${response.status}).`, detail: detail.slice(0, 400) },
-      { status: 502 },
-    );
+  let system = SYSTEM;
+  if (body.camera) {
+    system += " This is a camera update. Four to eight sentences about the real scene. Do not reply SILENCE.";
+  }
+  if (body.vision) {
+    system += ` [vision] ${body.vision.slice(0, 400)}`;
   }
 
-  const payload = (await response.json()) as {
-    choices?: { message?: { content?: string }; delta?: { content?: string } }[];
-  };
-  const raw = payload.choices?.[0]?.message?.content || payload.choices?.[0]?.delta?.content || "";
-  const text = sanitizeSpokenText(raw) || raw.trim();
-  return NextResponse.json({ text });
+  try {
+    const raw = await completeOnRunPod([{ role: "system", content: system }, ...history, { role: "user", content: message.slice(0, 800) }]);
+    const text = sanitizeSpokenText(raw) || raw.trim();
+    if (!text) {
+      return NextResponse.json({ error: "Empty model reply. Is the RunPod serve running?" }, { status: 502 });
+    }
+    return NextResponse.json({ text });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Request failed.";
+    return NextResponse.json({ error: detail }, { status: 502 });
+  }
 }

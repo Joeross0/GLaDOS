@@ -640,15 +640,10 @@ class LanguageModelProcessor:
         """Build the message list for the LLM request, injecting context from registered sources."""
         messages = self._conversation_store.snapshot()
         if self._finetuned:
-            last_user = ""
-            for message in reversed(messages):
-                if message.get("role") == "user":
-                    last_user = str(message.get("content", "")).strip()
-                    if last_user:
-                        break
             from .style_model import FINE_TUNE_SYSTEM
 
             system = FINE_TUNE_SYSTEM
+            system += " This desktop session is separate from any web session."
             if autonomy_mode:
                 system += " This is a camera update. Four to eight sentences about the real scene. Do not reply SILENCE."
             slim: list[dict[str, Any]] = [{"role": "system", "content": system}]
@@ -656,8 +651,18 @@ class LanguageModelProcessor:
                 snapshot = self.vision_state.snapshot()
                 if snapshot:
                     slim.append({"role": "system", "content": f"[vision] {snapshot[:400]}"})
-            if last_user:
-                slim.append({"role": "user", "content": last_user[:800]})
+            turns = [
+                message
+                for message in messages
+                if message.get("role") in {"user", "assistant"} and str(message.get("content", "")).strip()
+            ]
+            for message in turns[-12:]:
+                slim.append(
+                    {
+                        "role": message.get("role"),
+                        "content": str(message.get("content", ""))[:800],
+                    }
+                )
             return slim
         extra_messages: list[dict[str, Any]] = []
 

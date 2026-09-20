@@ -24,12 +24,45 @@ body {
 }
 
 main {
-  width: min(720px, 100%);
+  width: min(960px, 100%);
   min-height: 100vh;
   padding: 24px 16px 32px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 12px;
+  min-height: 360px;
+}
+
+aside {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+video {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #050504;
+  border: 1px solid rgba(255, 176, 0, 0.35);
+  object-fit: cover;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 720px) {
+  .stage {
+    grid-template-columns: 1fr;
+  }
 }
 
 h1 {
