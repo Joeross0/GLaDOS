@@ -9,7 +9,7 @@ from ..TTS import SpeechSynthesizerProtocol
 from ..observability import ObservabilityBus, trim_message
 from ..utils import spoken_text_converter as stc
 from .audio_data import AudioMessage
-from .text_clean import collapse_spaced_letters
+from .text_clean import sanitize_spoken_text
 
 
 class TextToSpeechSynthesizer:
@@ -65,7 +65,10 @@ class TextToSpeechSynthesizer:
                 elif not text_to_speak.strip():  # Check for empty or whitespace-only strings
                     logger.warning(f"TTS Synthesizer: Received empty or whitespace string: '{text_to_speak}'")
                 else:
-                    text_to_speak = collapse_spaced_letters(text_to_speak)
+                    text_to_speak = sanitize_spoken_text(text_to_speak)
+                    if not text_to_speak:
+                        logger.info("TTS Synthesizer: Dropped empty or smashed line.")
+                        continue
                     logger.info(f"LLM text: {text_to_speak}")
                     if self._observability_bus:
                         self._observability_bus.emit(
