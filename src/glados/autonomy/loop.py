@@ -93,9 +93,16 @@ class AutonomyLoop:
         if isinstance(event, TimeTickEvent):
             return True
         if isinstance(event, VisionUpdateEvent):
-            if event.change_score < 0.35:
+            caption_changed = bool(event.prev_description) and (
+                event.prev_description.strip() != event.description.strip()
+            )
+            first_look = not event.prev_description
+            motion = event.change_score >= 0.05
+            if event.forced and not motion:
                 return True
-            return (time.time() - self._last_prompt_ts) < 45
+            if not first_look and not motion and not caption_changed:
+                return True
+            return (time.time() - self._last_prompt_ts) < 18
         if self._config.cooldown_s <= 0:
             return False
         return (time.time() - self._last_prompt_ts) < self._config.cooldown_s

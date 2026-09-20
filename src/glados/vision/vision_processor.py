@@ -115,7 +115,8 @@ class VisionProcessor:
                     self.vision_state.update(description, change_score=change_score)
                     self._last_snapshot_ts = time.time()
                     logger.success("Vision snapshot updated: {}", description)
-                    self._publish_update(description, change_score)
+                    forced = stale and change_score <= self.config.scene_change_threshold
+                    self._publish_update(description, change_score, forced=forced)
                     self._last_description = description
 
                 self._sleep(loop_started)
@@ -324,7 +325,7 @@ class VisionProcessor:
         if sleep_time:
             self.shutdown_event.wait(timeout=sleep_time)
 
-    def _publish_update(self, description: str, change_score: float) -> None:
+    def _publish_update(self, description: str, change_score: float, forced: bool = False) -> None:
         if self._event_bus:
             self._event_bus.publish(
                 VisionUpdateEvent(
@@ -332,6 +333,7 @@ class VisionProcessor:
                     prev_description=self._last_description,
                     change_score=change_score,
                     captured_at=time.time(),
+                    forced=forced,
                 )
             )
         if self._observability_bus:

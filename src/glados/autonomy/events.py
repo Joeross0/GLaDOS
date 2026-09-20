@@ -7,6 +7,7 @@ class VisionUpdateEvent:
     prev_description: str | None
     change_score: float
     captured_at: float
+    forced: bool = False
 
 
 @dataclass(frozen=True)
