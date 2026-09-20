@@ -160,9 +160,47 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
     model = PeftModel.from_pretrained(model, str(ADAPTER_DIR))
     model.eval()
     model.config.use_cache = True
-    with torch.inference_mode():
-        warm = tokenizer("Ready.", return_tensors="pt").to(model.device)
-        model.generate(**warm, max_new_tokens=1, use_cache=True)
+    eos_ids = [tokenizer.eos_token_id]
+    for name in ("<|im_end|>", "<|im_start|>", "<|eot_id|>"):
+        token_id = tokenizer.convert_tokens_to_ids(name)
+        if isinstance(token_id, int) and token_id not in eos_ids:
+            eos_ids.append(token_id)
+
+    def generate_reply(messages: list[dict[str, str]], max_new_tokens: int, streamer: TextIteratorStreamer | None) -> None:
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        with torch.inference_mode():
+            model.generate(
+                **inputs,
+                streamer=streamer,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=0.7,
+                repetition_penalty=1.15,
+                use_cache=True,
+                eos_token_id=eos_ids,
+                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            )
+
+    logger.info("Warming the same chat path a real reply uses. Wait for READY.")
+    warm_stream = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    warm_thread = Thread(
+        target=generate_reply,
+        args=(
+            [
+                {"role": "system", "content": "You are GLaDOS."},
+                {"role": "user", "content": "Status."},
+            ],
+            8,
+            warm_stream,
+        ),
+        daemon=True,
+    )
+    warm_thread.start()
+    for _ in warm_stream:
+        pass
+    warm_thread.join(timeout=120)
+    logger.info("READY. Talk now; the first spoken reply should not cold-start.")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -183,30 +221,12 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             messages = payload.get("messages", [])
-            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
             streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-            eos_ids = [tokenizer.eos_token_id]
-            for name in ("<|im_end|>", "<|im_start|>", "<|eot_id|>"):
-                token_id = tokenizer.convert_tokens_to_ids(name)
-                if isinstance(token_id, int) and token_id not in eos_ids:
-                    eos_ids.append(token_id)
-
-            def _generate() -> None:
-                with torch.inference_mode():
-                    model.generate(
-                        **inputs,
-                        streamer=streamer,
-                        max_new_tokens=64,
-                        do_sample=True,
-                        temperature=0.7,
-                        repetition_penalty=1.15,
-                        use_cache=True,
-                        eos_token_id=eos_ids,
-                        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
-                    )
-
-            thread = Thread(target=_generate, daemon=True)
+            thread = Thread(
+                target=generate_reply,
+                args=(messages, 64, streamer),
+                daemon=True,
+            )
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")

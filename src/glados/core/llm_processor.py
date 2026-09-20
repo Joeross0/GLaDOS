@@ -818,6 +818,7 @@ class LanguageModelProcessor:
                                                         chunk, in_thinking, thinking_buffer, harmony_mode
                                                     )
                                                     if speakable:
+                                                        self._end_thinking()
                                                         sentence_buffer.append(speakable)
                                                         if speakable.strip() in self.PUNCTUATION_SET and (
                                                             len(sentence_buffer) < 2
