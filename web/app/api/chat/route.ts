@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { completeOnRunPod } from "@/lib/runpod";
-import { sanitizeSpokenText } from "@/lib/sanitize";
+import { chunkSpokenText, sanitizeSpokenText } from "@/lib/sanitize";
 
 export const maxDuration = 60;
 
@@ -40,11 +40,13 @@ export async function POST(request: Request) {
 
   try {
     const raw = await completeOnRunPod([{ role: "system", content: system }, ...history, { role: "user", content: message.slice(0, 800) }]);
-    const text = sanitizeSpokenText(raw) || raw.trim();
+    const already = history.filter((turn) => turn.role === "assistant").map((turn) => turn.content);
+    const chunks = chunkSpokenText(raw, already);
+    const text = chunks.join(" ") || sanitizeSpokenText(raw) || raw.trim();
     if (!text) {
       return NextResponse.json({ error: "Empty model reply. Is the RunPod serve running?" }, { status: 502 });
     }
-    return NextResponse.json({ text });
+    return NextResponse.json({ text, chunks });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Request failed.";
     return NextResponse.json({ error: detail }, { status: 502 });

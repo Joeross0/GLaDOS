@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { chunkSpokenText } from "@/lib/sanitize";
 
 type Line = { role: "you" | "glados" | "system"; text: string };
 type Detector = { detect: (video: HTMLVideoElement) => Promise<{ class: string; score: number }[]> };
@@ -21,6 +22,7 @@ export default function Page() {
   ]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [listening, setListening] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [scene, setScene] = useState("camera off");
@@ -59,20 +61,13 @@ export default function Page() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const speak = useCallback(async (reply: string) => {
+  const speakChunk = useCallback(async (piece: string): Promise<boolean> => {
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: reply }),
+      body: JSON.stringify({ text: piece }),
     });
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as { error?: string };
-      setLines((current) => [
-        ...current,
-        { role: "system", text: payload.error || "GLaDOS voice is not up on the pod yet." },
-      ]);
-      return;
-    }
+    if (!response.ok) return false;
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     audioRef.current?.pause();
@@ -80,12 +75,18 @@ export default function Page() {
     const player = new Audio(url);
     audioRef.current = player;
     await player.play();
+    await new Promise<void>((resolve) => {
+      player.onended = () => resolve();
+      player.onerror = () => resolve();
+    });
+    return true;
   }, []);
 
   const ask = useCallback(
     async (message: string, camera = false, vision = "") => {
       if (!message || busyRef.current) return;
       setBusy(true);
+      setThinking(true);
       if (!camera) {
         setLines((current) => [...current, { role: "you", text: message }]);
       } else {
@@ -104,15 +105,38 @@ export default function Page() {
           body: JSON.stringify({ message, history, vision, camera, sessionId: sessionStorage.getItem(SESSION_KEY) }),
         });
         const raw = await response.text();
-        let payload: { text?: string; error?: string } = {};
+        let payload: { text?: string; error?: string; chunks?: string[] } = {};
         try {
-          payload = raw ? (JSON.parse(raw) as { text?: string; error?: string }) : {};
+          payload = raw ? (JSON.parse(raw) as { text?: string; error?: string; chunks?: string[] }) : {};
         } catch {
           payload = { error: raw.slice(0, 200) || "Empty reply from the web API." };
         }
-        const reply = payload.text || payload.error || "No response.";
-        setLines((current) => [...current, { role: "glados", text: reply }]);
-        if (payload.text) await speak(reply);
+        if (payload.error && !payload.text && !payload.chunks?.length) {
+          setThinking(false);
+          setLines((current) => [...current, { role: "system", text: payload.error || "No response." }]);
+          return;
+        }
+        const already = linesRef.current.filter((line) => line.role === "glados").map((line) => line.text);
+        const chunks = (payload.chunks?.length ? payload.chunks : chunkSpokenText(payload.text || "", already)).slice(0, 12);
+        if (!chunks.length) {
+          setThinking(false);
+          return;
+        }
+        for (const piece of chunks) {
+          const heard = await speakChunk(piece);
+          setThinking(false);
+          setLines((current) => [...current, { role: "glados", text: piece }]);
+          requestAnimationFrame(() => {
+            logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+          });
+          if (!heard) {
+            const rest = chunks.slice(chunks.indexOf(piece) + 1);
+            if (rest.length) {
+              setLines((current) => [...current, ...rest.map((text) => ({ role: "glados" as const, text }))]);
+            }
+            break;
+          }
+        }
       } catch (error) {
         setLines((current) => [
           ...current,
@@ -120,12 +144,13 @@ export default function Page() {
         ]);
       } finally {
         setBusy(false);
+        setThinking(false);
         requestAnimationFrame(() => {
           logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
         });
       }
     },
-    [speak],
+    [speakChunk],
   );
 
   async function onSubmit(event: FormEvent) {
@@ -290,13 +315,14 @@ export default function Page() {
               {line.role === "you" ? "You" : line.role === "glados" ? "GLaDOS" : "System"}: {line.text}
             </p>
           ))}
+          {thinking ? <p className="line thinking">GLaDOS: Thinking</p> : null}
         </div>
       </div>
       <form onSubmit={(event) => void onSubmit(event)}>
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder={busy ? "Thinking..." : "Type or use the mic"}
+            placeholder={thinking ? "Thinking..." : "Speak, test subject"}
           disabled={busy}
           autoFocus
         />
