@@ -729,9 +729,10 @@ class LanguageModelProcessor:
                 }
                 if self._ollama_mode:
                     data["options"] = {
-                        "temperature": 0.75,
-                        "top_p": 0.9,
-                        "num_predict": 384,
+                        "temperature": 0.85,
+                        "top_p": 0.92,
+                        "repeat_penalty": 1.15,
+                        "num_predict": 1024,
                     }
                 if allow_tools and tools:
                     data["tools"] = tools
