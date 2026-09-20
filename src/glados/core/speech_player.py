@@ -158,8 +158,9 @@ class SpeechPlayer:
                                 kind="finish",
                                 message=trim_message(audio_msg.text),
                             )
-                    # Stay marked as speaking until EOS so the next sentence is not
-                    # picked up as user speech between clips.
+
+                    self.currently_speaking_event.clear()
+                    self._echo_filter.mark_speaking(False)
     
                 else:
                     logger.warning(f"AudioPlayer: Received empty audio message or no text: {audio_len, audio_msg}")

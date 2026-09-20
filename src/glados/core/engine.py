@@ -402,6 +402,7 @@ class Glados:
 
         # Initialize audio input/output system
         self.audio_io: AudioProtocol = audio_io
+        self.audio_io_options: dict[str, Any] = {}
         logger.info("Audio I/O system initialized.")
 
         # Initialize threads for each component
@@ -830,7 +831,32 @@ class Glados:
         logger.success("Playing announcement...")
         if self.announcement:
             self.tts_queue.put(self.announcement)
+            self.tts_queue.put("<EOS>")
             self.processing_active_event.set()
+
+    def list_input_devices(self) -> list[tuple[int | None, str]]:
+        from ..audio_io.sounddevice_io import list_input_devices
+
+        if type(self.audio_io).__name__ != "SoundDeviceAudioIO":
+            return [(None, "Remote / no local microphone")]
+        return list_input_devices()
+
+    def get_input_device(self) -> int | str | None:
+        getter = getattr(self.audio_io, "get_input_device", None)
+        if callable(getter):
+            return getter()
+        return None
+
+    def set_input_device(self, input_device: int | str | None) -> str:
+        setter = getattr(self.audio_io, "set_input_device", None)
+        if not callable(setter):
+            return "This audio backend does not support microphone selection."
+        setter(input_device)
+        options = dict(self.audio_io_options or {})
+        options["input_device"] = input_device
+        self.audio_io_options = options
+        label = "system default" if input_device is None else str(input_device)
+        return f"Microphone set to {label}."
 
     @property
     def messages(self) -> list[dict[str, Any]]:
@@ -867,7 +893,7 @@ class Glados:
         )
 
         try:
-            return cls(
+            instance = cls(
                 asr_model=asr_model,
                 tts_model=tts_model,
                 audio_io=audio_io,
@@ -889,6 +915,8 @@ class Glados:
                 llm_headers=config.llm_headers,
                 portal_config=config.portal,
             )
+            instance.audio_io_options = dict(config.audio_io_options or {})
+            return instance
         except Exception:
             cls._close_audio_backend(audio_io)
             raise
@@ -1142,6 +1170,14 @@ class Glados:
         )
         register(
             CommandSpec(
+                name="mic",
+                description="Select the microphone input device",
+                usage="/mic list | /mic <index>|default",
+                handler=self._cmd_mic,
+            )
+        )
+        register(
+            CommandSpec(
                 name="observe",
                 description="Open observability screen (TUI)",
                 usage="/observe",
@@ -1291,6 +1327,21 @@ class Glados:
             self.set_asr_muted(True)
             return "ASR muted."
         return "Usage: /asr on|off"
+
+    def _cmd_mic(self, args: list[str]) -> str:
+        devices = self.list_input_devices()
+        current = self.get_input_device()
+        if not args or args[0].lower() in {"list", "ls"}:
+            lines = [f"Current microphone: {current if current is not None else 'system default'}"]
+            lines.extend(f"- {label}" for _, label in devices)
+            return "\n".join(lines)
+        choice = args[0].lower()
+        if choice in {"default", "none", "system"}:
+            return self.set_input_device(None)
+        try:
+            return self.set_input_device(int(choice))
+        except ValueError:
+            return "Usage: /mic list | /mic <index>|default"
 
     def _cmd_tts(self, args: list[str]) -> str:
         if not args:

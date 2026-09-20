@@ -34,7 +34,7 @@ def is_similar_utterance(left: str, right: str, threshold: float = 0.72) -> bool
 class SpokenTranscriptFilter:
     """Remember recent TTS so ASR can drop speaker echo and room tail."""
 
-    def __init__(self, hangover_s: float = 1.6, max_remembered: int = 12) -> None:
+    def __init__(self, hangover_s: float = 0.35, max_remembered: int = 12) -> None:
         self._hangover_s = hangover_s
         self._max_remembered = max_remembered
         self._lock = threading.Lock()

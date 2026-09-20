@@ -55,11 +55,25 @@ HeaderClock {
 }
 
 #command_bar {
+    layout: horizontal;
+    align: left middle;
     margin: 0 0 1 0;
     min-height: 3;
     height: auto;
     border: solid $primary;
     background: $surface;
+}
+
+#mic_label {
+    width: auto;
+    padding: 1 1 0 1;
+    color: $foreground;
+}
+
+#mic_select {
+    width: 42;
+    max-width: 50%;
+    margin: 0 1 0 0;
 }
 
 #dialog_log.hidden,
@@ -80,7 +94,7 @@ HeaderClock {
 }
 
 #command_input {
-    width: 100%;
+    width: 1fr;
     color: $foreground;
     background: $background;
     border: none;

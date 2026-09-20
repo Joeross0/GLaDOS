@@ -4,6 +4,8 @@ Glados:
   api_key: null  # Add your API key here if needed!
   interruptible: false
   audio_io: "sounddevice"
+  audio_io_options:
+    input_device: null
   input_mode: "audio"  # audio, text, or both
   tts_enabled: true
   asr_muted: false

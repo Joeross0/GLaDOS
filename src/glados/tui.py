@@ -19,7 +19,7 @@ from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import ModalScreen, Screen
 from rich.markup import escape
-from textual.widgets import Footer, Header, Input, Label, OptionList, RichLog, Static
+from textual.widgets import Footer, Header, Input, Label, OptionList, RichLog, Select, Static
 from textual.worker import Worker, WorkerState
 
 from glados.core.engine import Glados, GladosConfig
@@ -77,6 +77,7 @@ class GladosCommands(Provider):
         # TUI commands - use partial for reliable binding
         tui_commands = [
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
+            ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -97,6 +98,8 @@ class GladosCommands(Provider):
                     # Handle special commands
                     if spec.name == "quit":
                         callback = partial(app.exit)
+                    elif spec.name == "mic":
+                        callback = partial(app.action_mic_picker)
                     elif spec.usage and "on|off" in spec.usage:
                         callback = partial(app._open_toggle_picker, spec.name)
                     else:
@@ -115,6 +118,7 @@ class GladosCommands(Provider):
         # TUI commands - use partial for reliable binding
         tui_commands = [
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
+            ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -133,6 +137,8 @@ class GladosCommands(Provider):
                 # Handle special commands
                 if spec.name == "quit":
                     callback = partial(app.exit)
+                elif spec.name == "mic":
+                    callback = partial(app.action_mic_picker)
                 elif spec.usage and "on|off" in spec.usage:
                     callback = partial(app._open_toggle_picker, spec.name)
                 else:
@@ -342,12 +348,14 @@ class StatusPanel(Static):
         vision = "ON" if engine.vision_config is not None else "OFF"
         asr = "MUTED" if engine.asr_muted_event.is_set() else "ACTIVE"
         tts = "MUTED" if engine.tts_muted_event.is_set() else "ACTIVE"
+        mic_name = app._current_mic_label()
         lines = [
             f"ASR: {asr}  TTS: {tts}",
             f"Autonomy: {autonomy}  Jobs: {jobs}",
             f"Vision: {vision}",
             f"Speaking: {speaking_indicator}",
             f"Microphone: {vad_indicator} {rms_db:5.1f} dB",
+            f"Input: {mic_name}",
         ]
         self.update("\n".join(lines))
 
@@ -729,6 +737,42 @@ class ThemePickerScreen(ModalScreen[None]):
         self.dismiss()
 
 
+class MicPickerScreen(ModalScreen[None]):
+    """Dropdown-style microphone picker."""
+
+    BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
+        ("escape", "app.pop_screen", "Close screen")
+    ]
+
+    TITLE = "Microphone"
+
+    def compose(self) -> ComposeResult:
+        with Container(id="theme_dialog"):
+            yield Label(self.TITLE, id="theme_title")
+            yield OptionList(id="mic_list")
+            yield Static("Enter to select • Esc to cancel", id="theme_hint")
+
+    def on_mount(self) -> None:
+        dialog = self.query_one("#theme_dialog")
+        dialog.border_title = self.TITLE
+        dialog.border_title_align = "center"
+        option_list = self.query_one("#mic_list", OptionList)
+        app = cast(GladosUI, self.app)
+        option_list.clear_options()
+        labels = [label for _, label in app._mic_device_choices()]
+        option_list.add_options(labels or ["System default"])
+        current = app._current_mic_label()
+        if current in labels:
+            option_list.highlighted = labels.index(current)
+
+    def on_option_list_option_selected(self, message: OptionList.OptionSelected) -> None:
+        app = cast(GladosUI, self.app)
+        prompt = message.option.prompt
+        selected = prompt.plain if hasattr(prompt, "plain") else str(prompt)
+        app._apply_mic_label(selected)
+        self.dismiss()
+
+
 class OnOffPickerScreen(ModalScreen[None]):
     """Picker for on/off command options."""
 
@@ -995,6 +1039,7 @@ class GladosUI(App[None]):
         self._theme_override = theme
         self._active_theme = None
         self._queue_metrics = {}
+        self._syncing_mic = False
 
     def compose(self) -> ComposeResult:
         """
@@ -1036,7 +1081,14 @@ class GladosUI(App[None]):
                     yield Label("[u]M[/u]CP", id="mcp_title")
                     yield MCPPanel(id="mcp_panel")
 
-        with Container(id="command_bar"):
+        with Horizontal(id="command_bar"):
+            yield Label("Mic", id="mic_label")
+            yield Select(
+                self._mic_select_options(),
+                id="mic_select",
+                allow_blank=False,
+                prompt="Microphone",
+            )
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1151,6 +1203,85 @@ class GladosUI(App[None]):
         if not isinstance(self.screen, ThemePickerScreen):
             self.push_screen(ThemePickerScreen())
 
+    def action_mic_picker(self) -> None:
+        """Open the microphone picker modal."""
+        if not isinstance(self.screen, MicPickerScreen):
+            self.push_screen(MicPickerScreen())
+
+    def _mic_device_choices(self) -> list[tuple[int | None, str]]:
+        engine = self.glados_engine_instance
+        if engine:
+            return engine.list_input_devices()
+        from glados.audio_io.sounddevice_io import list_input_devices
+
+        return list_input_devices()
+
+    def _mic_select_options(self) -> list[tuple[str, str]]:
+        options: list[tuple[str, str]] = []
+        for index, label in self._mic_device_choices():
+            options.append((label, "default" if index is None else str(index)))
+        return options or [("System default", "default")]
+
+    def _current_mic_label(self) -> str:
+        current = None
+        if self.glados_engine_instance:
+            current = self.glados_engine_instance.get_input_device()
+        for index, label in self._mic_device_choices():
+            if index == current:
+                return label
+        return "System default"
+
+    def _apply_mic_value(self, value: str) -> None:
+        device: int | None
+        if value in {"default", ""}:
+            device = None
+        else:
+            try:
+                device = int(value)
+            except ValueError:
+                self.notify(f"Unknown microphone: {value}", severity="warning")
+                return
+        if not self.glados_engine_instance:
+            self.notify("Engine not ready.", severity="warning")
+            return
+        response = self.glados_engine_instance.set_input_device(device)
+        logger.success("TUI microphone: {}", response)
+        self.notify(response, title="Microphone", timeout=3)
+        self._sync_mic_select()
+
+    def _apply_mic_label(self, label: str) -> None:
+        for index, device_label in self._mic_device_choices():
+            if device_label == label:
+                self._apply_mic_value("default" if index is None else str(index))
+                return
+        self.notify(f"Unknown microphone: {label}", severity="warning")
+
+    def _sync_mic_select(self) -> None:
+        try:
+            selector = self.query_one("#mic_select", Select)
+        except NoMatches:
+            return
+        options = self._mic_select_options()
+        current = "default"
+        if self.glados_engine_instance:
+            device = self.glados_engine_instance.get_input_device()
+            current = "default" if device is None else str(device)
+        self._syncing_mic = True
+        try:
+            selector.set_options(options)
+            selector.value = current
+        except Exception:
+            selector.set_options(options)
+        finally:
+            self._syncing_mic = False
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "mic_select" or self._syncing_mic:
+            return
+        if event.value is Select.BLANK:
+            return
+        self._apply_mic_value(str(event.value))
+
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""
         self.action_theme_picker()
@@ -1192,6 +1323,7 @@ class GladosUI(App[None]):
             if self.glados_engine_instance is not None:
                 self.glados_engine_instance.play_announcement()
                 self.start_glados()
+                self._sync_mic_select()
             self.focus_command_input()
         elif message.state == WorkerState.ERROR:
             worker = message.worker

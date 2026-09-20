@@ -13,6 +13,23 @@ from .base import AudioIO
 from .resample import resample as resample_audio
 
 
+def list_input_devices() -> list[tuple[int | None, str]]:
+    """Return available microphone devices as (index, label) pairs."""
+    devices: list[tuple[int | None, str]] = [(None, "System default")]
+    try:
+        host_default = sd.default.device
+        default_input = host_default[0] if isinstance(host_default, (list, tuple)) else None
+        for index, info in enumerate(sd.query_devices()):
+            if int(info.get("max_input_channels", 0) or 0) <= 0:
+                continue
+            name = str(info.get("name", f"Device {index}"))
+            suffix = " (default)" if default_input == index else ""
+            devices.append((index, f"{index}: {name}{suffix}"))
+    except Exception as exc:
+        logger.warning("Could not list audio input devices: {}", exc)
+    return devices
+
+
 class SoundDeviceAudioIO(AudioIO):
     """Audio I/O implementation using sounddevice for both input and output.
 
@@ -25,7 +42,7 @@ class SoundDeviceAudioIO(AudioIO):
     VAD_SIZE: int = 32  # Milliseconds of sample for Voice Activity Detection (VAD)
     VAD_THRESHOLD: float = 0.8  # Threshold for VAD detection
 
-    def __init__(self, vad_threshold: float | None = None) -> None:
+    def __init__(self, vad_threshold: float | None = None, input_device: int | str | None = None) -> None:
         """Initialize the sounddevice audio I/O.
 
         Args:
@@ -44,6 +61,7 @@ class SoundDeviceAudioIO(AudioIO):
             raise ValueError("VAD threshold must be between 0 and 1")
 
         self._vad_model = VAD()
+        self._input_device = input_device
 
         self._sample_queue: queue.Queue[tuple[NDArray[np.float32], bool]] = queue.Queue()
         self.input_stream: sd.InputStream | None = None
@@ -99,6 +117,7 @@ class SoundDeviceAudioIO(AudioIO):
             self.input_stream = sd.InputStream(
                 samplerate=self.SAMPLE_RATE,
                 channels=1,
+                device=self._input_device,
                 callback=audio_callback,
                 blocksize=int(self.SAMPLE_RATE * self.VAD_SIZE / 1000),
             )
@@ -121,6 +140,17 @@ class SoundDeviceAudioIO(AudioIO):
                 logger.error(f"Error stopping input stream: {e}")
             finally:
                 self.input_stream = None
+
+    def get_input_device(self) -> int | str | None:
+        return self._input_device
+
+    def set_input_device(self, input_device: int | str | None) -> None:
+        """Switch microphones and restart capture if it is already running."""
+        was_listening = self.input_stream is not None
+        self._input_device = input_device
+        if was_listening:
+            self.start_listening()
+        logger.success("Microphone set to {}", input_device if input_device is not None else "system default")
 
     def start_speaking(self, audio_data: NDArray[np.float32], sample_rate: int | None = None, text: str = "") -> None:
         """Queue audio for playback through the system speakers.
