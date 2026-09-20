@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from functools import partial
 import math
 from datetime import datetime
+import time
 from pathlib import Path
 import re
 import sys
@@ -308,6 +309,8 @@ class DialogLog(RichLog):
     def _event_to_dialog(self, event: ObservabilityEvent) -> DialogLine | None:
         if event.kind == "user_input" and event.source in {"asr", "text"}:
             return DialogLine(role="You", content=event.message)
+        if event.source == "llm" and event.kind == "thinking":
+            return DialogLine(role="System", content="Thinking...")
         if event.source == "tts" and event.kind == "play":
             return DialogLine(role="GLaDOS", content=event.message)
         if event.source == "tts" and event.kind == "turn_end":
@@ -340,14 +343,20 @@ class SpeechBadge(Static):
             self.remove_class("speaking", "listening")
             return
         speaking = engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set()
-        if speaking:
+        thinking = engine.thinking_event.is_set() and not speaking
+        if thinking:
+            dots = "." * ((int(time.time() * 2) % 3) + 1)
+            self.update(f"[bold black on #7dd3fc] THINKING{dots:<3} [/]")
+            self.add_class("thinking")
+            self.remove_class("speaking", "listening")
+        elif speaking:
             self.update("[bold black on yellow] SPEAKING [/]")
             self.add_class("speaking")
-            self.remove_class("listening")
+            self.remove_class("listening", "thinking")
         else:
             self.update("[bold black on green] LISTENING [/]")
             self.add_class("listening")
-            self.remove_class("speaking")
+            self.remove_class("speaking", "thinking")
 
 
 class StatusPanel(Static):
@@ -387,7 +396,7 @@ class StatusPanel(Static):
             f"ASR: {asr}  TTS: {tts}",
             f"Autonomy: {autonomy}  Jobs: {jobs}",
             f"Vision: {vision}",
-            f"Speaking: {speaking_indicator}  {'SPEAKING' if engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set() else 'DONE / LISTENING'}",
+            f"Speaking: {speaking_indicator}  {'SPEAKING' if engine.turn_speaking_event.is_set() or engine.currently_speaking_event.is_set() else 'THINKING' if engine.thinking_event.is_set() else 'DONE / LISTENING'}",
             f"Microphone: {vad_indicator} {rms_db:5.1f} dB",
             f"Input: {mic_name}",
             f"Interrupt: {'ON' if engine.interruptible else 'OFF'}",

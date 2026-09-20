@@ -82,6 +82,11 @@ HeaderClock {
     background: #7cb342;
 }
 
+#speech_badge.thinking {
+    color: #111111;
+    background: #7dd3fc;
+}
+
 #mic_button,
 #interrupt_button {
     width: auto;

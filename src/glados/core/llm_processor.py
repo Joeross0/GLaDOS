@@ -70,6 +70,7 @@ class LanguageModelProcessor:
         extra_headers: dict[str, str] | None = None,
         lane: str = "priority",
         inflight_counter: InFlightCounter | None = None,
+        thinking_event: threading.Event | None = None,
     ) -> None:
         self.llm_input_queue = llm_input_queue
         self.tool_calls_queue = tool_calls_queue
@@ -91,6 +92,7 @@ class LanguageModelProcessor:
         self._observability_bus = observability_bus
         self._lane = lane
         self._inflight_counter = inflight_counter
+        self.thinking_event = thinking_event
         self._ollama_mode = self._is_ollama_endpoint()
         self._spoken_this_turn: list[str] = []
 
@@ -99,6 +101,23 @@ class LanguageModelProcessor:
             self.prompt_headers["Authorization"] = f"Bearer {api_key}"
         if extra_headers:
             self.prompt_headers.update(extra_headers)
+
+    def _begin_thinking(self, autonomy_mode: bool) -> None:
+        if autonomy_mode or self.thinking_event is None:
+            return
+        self.thinking_event.set()
+        if self._observability_bus:
+            self._observability_bus.emit(
+                source="llm",
+                kind="thinking",
+                message="Thinking...",
+                meta={"lane": self._lane},
+            )
+
+    def _end_thinking(self) -> None:
+        if self.thinking_event is None:
+            return
+        self.thinking_event.clear()
 
     def _is_ollama_endpoint(self) -> bool:
         try:
@@ -365,14 +384,16 @@ class LanguageModelProcessor:
         sentence = re.sub(r"\*.*?\*|\(.*?\)", "", sentence)
         sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace("  ", " ").replace(":", " ")
 
-        if sentence and sentence != ".":  # Avoid sending just a period
+            if sentence and sentence != ".":  # Avoid sending just a period
             if self._is_silence_reply(sentence):
                 logger.info("LLM Processor: Staying silent.")
+                self._end_thinking()
                 return
             if self._is_repetitive_sentence(sentence):
                 logger.info("LLM Processor: Dropping repeated sentence: '{}'", sentence)
                 return
             logger.info(f"LLM Processor: Sending to TTS queue: '{sentence}'")
+            self._end_thinking()
             self.tts_input_queue.put(sentence)
             self._spoken_this_turn.append(sentence)
 
@@ -672,6 +693,7 @@ class LanguageModelProcessor:
                 else:
                     inflight_guard = False
                 self._conversation_store.append(llm_message)
+                self._begin_thinking(autonomy_mode)
 
                 self._spoken_this_turn = []
                 allow_tools = bool(llm_input.get("_allow_tools", True))
@@ -852,6 +874,7 @@ class LanguageModelProcessor:
                         # If an EOS was already sent by TTS from a *previous* partial sentence,
                         # this could lead to an early clear of currently_speaking.
                         # The `processing_active_event` is key to synchronize.
+                    self._end_thinking()
                     if inflight_guard:
                         self._inflight_counter.decrement()
 

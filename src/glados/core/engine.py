@@ -351,6 +351,7 @@ class Glados:
         self.processing_active_event = threading.Event()  # Indicates if input processing is active (ASR + LLM + TTS + VLM)
         self.currently_speaking_event = threading.Event()  # Indicates if the assistant is currently speaking
         self.turn_speaking_event = threading.Event()  # True for the whole spoken reply until EOS
+        self.thinking_event = threading.Event()
         self.echo_filter = SpokenTranscriptFilter()
         self.shutdown_event = threading.Event()  # Event to signal shutdown of all threads
 
@@ -487,6 +488,7 @@ class Glados:
             observability_bus=self.observability_bus,
             extra_headers=llm_headers,
             lane="priority",
+            thinking_event=self.thinking_event,
         )
         self.autonomy_llm_processors: list[LanguageModelProcessor] = []
         autonomy_parallel_calls = 0
