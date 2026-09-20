@@ -25,6 +25,7 @@ export default function Page() {
   const [thinking, setThinking] = useState(false);
   const [listening, setListening] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
+  const [interruptible, setInterruptible] = useState(false);
   const [scene, setScene] = useState("camera off");
   const [sid, setSid] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
@@ -35,6 +36,8 @@ export default function Page() {
   const detectorRef = useRef<Detector | null>(null);
   const lastSceneRef = useRef("");
   const busyRef = useRef(false);
+  const interruptibleRef = useRef(false);
+  const turnRef = useRef(0);
   const linesRef = useRef(lines);
 
   useEffect(() => {
@@ -43,6 +46,9 @@ export default function Page() {
   useEffect(() => {
     busyRef.current = busy;
   }, [busy]);
+  useEffect(() => {
+    interruptibleRef.current = interruptible;
+  }, [interruptible]);
 
   useEffect(() => {
     setSid(sessionId());
@@ -54,6 +60,7 @@ export default function Page() {
         /* keep default */
       }
     }
+    setInterruptible(sessionStorage.getItem("glados-web-interrupt") === "1");
   }, []);
 
   useEffect(() => {
@@ -63,30 +70,52 @@ export default function Page() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const speakChunk = useCallback(async (piece: string): Promise<boolean> => {
+  function stopSpeech() {
+    turnRef.current += 1;
+    audioRef.current?.pause();
+    if (audioRef.current?.src.startsWith("blob:")) URL.revokeObjectURL(audioRef.current.src);
+    audioRef.current = null;
+    setThinking(false);
+  }
+
+  const speakChunk = useCallback(async (piece: string, turn: number): Promise<boolean> => {
+    if (turn !== turnRef.current) return false;
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: piece }),
     });
-    if (!response.ok) return false;
+    if (!response.ok || turn !== turnRef.current) return false;
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     audioRef.current?.pause();
-    if (audioRef.current?.src) URL.revokeObjectURL(audioRef.current.src);
+    if (audioRef.current?.src.startsWith("blob:")) URL.revokeObjectURL(audioRef.current.src);
     const player = new Audio(url);
     audioRef.current = player;
     await player.play();
     await new Promise<void>((resolve) => {
-      player.onended = () => resolve();
-      player.onerror = () => resolve();
+      const finish = () => {
+        window.clearInterval(tick);
+        resolve();
+      };
+      player.onended = finish;
+      player.onerror = finish;
+      const tick = window.setInterval(() => {
+        if (turn !== turnRef.current) {
+          player.pause();
+          finish();
+        }
+      }, 80);
     });
-    return true;
+    return turn === turnRef.current;
   }, []);
 
   const ask = useCallback(
     async (message: string, camera = false, vision = "") => {
-      if (!message || busyRef.current) return;
+      if (!message) return;
+      if (busyRef.current && !interruptibleRef.current) return;
+      if (busyRef.current && interruptibleRef.current) stopSpeech();
+      const turn = (turnRef.current += 1);
       setBusy(true);
       setThinking(true);
       if (!camera) {
@@ -113,6 +142,7 @@ export default function Page() {
         } catch {
           payload = { error: raw.slice(0, 200) || "Empty reply from the web API." };
         }
+        if (turn !== turnRef.current) return;
         if (payload.error && !payload.text && !payload.chunks?.length) {
           setThinking(false);
           setLines((current) => [...current, { role: "system", text: payload.error || "No response." }]);
@@ -125,7 +155,8 @@ export default function Page() {
           return;
         }
         for (const piece of chunks) {
-          const heard = await speakChunk(piece);
+          if (turn !== turnRef.current) return;
+          const heard = await speakChunk(piece, turn);
           setThinking(false);
           setLines((current) => [...current, { role: "glados", text: piece }]);
           requestAnimationFrame(() => {
@@ -145,8 +176,10 @@ export default function Page() {
           { role: "system", text: error instanceof Error ? error.message : "Request failed." },
         ]);
       } finally {
-        setBusy(false);
-        setThinking(false);
+        if (turn === turnRef.current) {
+          setBusy(false);
+          setThinking(false);
+        }
         requestAnimationFrame(() => {
           logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
         });
@@ -367,8 +400,20 @@ export default function Page() {
             <button type="button" onClick={() => void toggleCamera()}>
               {cameraOn ? "Camera off" : "Camera on"}
             </button>
-            <button type="button" onClick={toggleListen} disabled={busy}>
+            <button type="button" onClick={() => void toggleListen()}>
               {listening ? "Mic off" : "Mic on"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setInterruptible((current) => {
+                  const next = !current;
+                  sessionStorage.setItem("glados-web-interrupt", next ? "1" : "0");
+                  return next;
+                });
+              }}
+            >
+              Interrupt {interruptible ? "on" : "off"}
             </button>
             <button type="button" onClick={newSession}>
               New session
@@ -388,11 +433,13 @@ export default function Page() {
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
-            placeholder={thinking ? "Thinking..." : "Speak, test subject"}
-          disabled={busy}
+            placeholder={
+            thinking ? "Thinking..." : interruptible || !busy ? "Speak, test subject" : "Wait, or turn Interrupt on"
+          }
+          disabled={busy && !interruptible}
           autoFocus
         />
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy && !interruptible}>
           Send
         </button>
       </form>
