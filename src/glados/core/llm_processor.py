@@ -387,7 +387,9 @@ class LanguageModelProcessor:
         """
         sentence = "".join(current_sentence_parts)
         sentence = re.sub(r"\*.*?\*|\(.*?\)", "", sentence)
-        sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace("  ", " ").replace(":", " ")
+        sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace(":", " ")
+        sentence = re.sub(r"\b(?:[A-Za-z]\s+){1,}[A-Za-z]\b", lambda match: match.group(0).replace(" ", ""), sentence)
+        sentence = re.sub(r" {2,}", " ", sentence).strip()
 
         if sentence and sentence != ".":  # Avoid sending just a period
             if self._is_silence_reply(sentence):
