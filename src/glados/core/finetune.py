@@ -146,14 +146,29 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
     import json
     import time
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Lock, Thread
+    from threading import Event, Lock, Thread
 
     import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     from peft import PeftModel
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+        StoppingCriteria,
+        StoppingCriteriaList,
+        TextIteratorStreamer,
+    )
+
+    class FlagStop(StoppingCriteria):
+        def __init__(self, flag: Event) -> None:
+            super().__init__()
+            self.flag = flag
+
+        def __call__(self, input_ids, scores, **kwargs) -> bool:
+            return self.flag.is_set()
 
     tokenizer = AutoTokenizer.from_pretrained(ADAPTER_DIR)
     quant = BitsAndBytesConfig(
@@ -172,9 +187,15 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
 
     generate_lock = Lock()
 
-    def generate_reply(messages: list[dict[str, str]], max_new_tokens: int, streamer: TextIteratorStreamer | None) -> None:
+    def generate_reply(
+        messages: list[dict[str, str]],
+        max_new_tokens: int,
+        streamer: TextIteratorStreamer | None,
+        stop_event: Event | None = None,
+    ) -> None:
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        criteria = StoppingCriteriaList([FlagStop(stop_event)]) if stop_event is not None else None
         with generate_lock, torch.inference_mode():
             model.generate(
                 **inputs,
@@ -186,6 +207,7 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
                 use_cache=True,
                 eos_token_id=eos_ids,
                 pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                stopping_criteria=criteria,
             )
 
     logger.info("Warming the same chat path a real reply uses. Wait for READY.")
@@ -211,6 +233,8 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
     def _keep_warm() -> None:
         while True:
             time.sleep(20)
+            if generate_lock.locked():
+                continue
             try:
                 generate_reply(
                     [
@@ -245,9 +269,10 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             messages = payload.get("messages", [])
             streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+            stop_event = Event()
             thread = Thread(
                 target=generate_reply,
-                args=(messages, 220, streamer),
+                args=(messages, 220, streamer, stop_event),
                 daemon=True,
             )
             self.send_response(200)
@@ -255,29 +280,35 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             thread.start()
-            leaked = False
             try:
                 for token in streamer:
-                    if leaked:
-                        continue
                     lower = token.casefold()
                     if any(mark in lower for mark in ("<|im_start|>", "<|im_end|>", "uservoice", "assistantvoice")):
-                        leaked = True
-                        continue
+                        stop_event.set()
+                        break
                     if token.strip().casefold() in {"user", "assistant", "system"}:
-                        leaked = True
-                        continue
+                        stop_event.set()
+                        break
                     chunk = json.dumps({"choices": [{"delta": {"content": token}}]})
                     self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
                     self.wfile.flush()
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
+                if not stop_event.is_set():
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
             except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
-                logger.info("Client dropped the stream.")
-            thread.join(timeout=5)
+                stop_event.set()
+                logger.info("Client dropped the stream; stopping generate.")
+            thread.join(timeout=30)
 
         def log_message(self, fmt: str, *args: object) -> None:
-            logger.info(fmt, *args)
+            try:
+                detail = fmt % args
+            except Exception:
+                detail = " ".join(str(part) for part in (fmt, *args))
+            if "404" in detail or "500" in detail:
+                logger.warning("HTTP {}", detail)
+            else:
+                logger.debug("HTTP {}", detail)
 
     logger.info("Serving fine-tuned GLaDOS at http://{}:{}/v1/chat/completions", host, port)
     logger.info("Point completion_url at that URL and set llm_model to glados-lora.")
