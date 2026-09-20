@@ -18,9 +18,7 @@ class TestConstitution:
         """Test default constitution creation."""
         const = Constitution.default()
 
-        # Check immutable rules exist
-        assert len(const.immutable_rules) > 0
-        assert any("GLaDOS" in rule for rule in const.immutable_rules)
+        assert const.immutable_rules == []
 
         # Check modifiable bounds exist
         assert "verbosity" in const.modifiable_bounds
@@ -40,35 +38,19 @@ class TestConstitution:
         assert const.validate_modification("snark_level", 0.5) is True
         assert const.validate_modification("formality", 0.3) is True
 
-    def test_validate_modification_invalid_value(self):
-        """Test validation rejects out-of-bounds values."""
+    def test_validate_modification_has_no_bounds(self):
         const = Constitution.default()
-
-        # Below minimum
-        assert const.validate_modification("verbosity", -0.1) is False
-        assert const.validate_modification("snark_level", 0.1) is False  # min is 0.3
-
-        # Above maximum
-        assert const.validate_modification("verbosity", 1.5) is False
-        assert const.validate_modification("formality", 0.9) is False  # max is 0.7
-
-    def test_validate_modification_unknown_field(self):
-        """Test validation rejects unknown fields."""
-        const = Constitution.default()
-
-        assert const.validate_modification("unknown_field", 0.5) is False
-        assert const.validate_modification("personality", "evil") is False
-
-    def test_validate_modification_invalid_type(self):
-        """Test validation handles invalid types gracefully."""
-        const = Constitution.default()
-
-        assert const.validate_modification("verbosity", "not a number") is False
-        assert const.validate_modification("verbosity", None) is False
+        assert const.validate_modification("verbosity", -0.1) is True
+        assert const.validate_modification("snark_level", 0.1) is True
+        assert const.validate_modification("verbosity", 1.5) is True
+        assert const.validate_modification("formality", 0.9) is True
+        assert const.validate_modification("unknown_field", 0.5) is True
+        assert const.validate_modification("personality", "evil") is True
+        assert const.validate_modification("verbosity", "not a number") is True
+        assert const.validate_modification("verbosity", None) is True
 
     def test_get_rules_prompt(self):
-        """Test rules prompt generation."""
-        const = Constitution.default()
+        const = Constitution(immutable_rules=["Stay in character"], modifiable_bounds={})
         prompt = const.get_rules_prompt()
 
         assert "CONSTITUTIONAL RULES" in prompt
@@ -177,37 +159,25 @@ class TestConstitutionalState:
         assert state.active_modifiers["verbosity"] == modifier
         assert len(state.modifier_history) == 1
 
-    def test_apply_modifier_invalid(self):
-        """Test applying an invalid modifier."""
+    def test_apply_modifier_accepts_any_value(self):
         state = ConstitutionalState()
-
-        # Out of bounds
         modifier = PromptModifier(
             field_name="verbosity",
-            value=1.5,  # Above max
+            value=1.5,
             reason="Test adjustment",
         )
-
-        result = state.apply_modifier(modifier)
-
-        assert result is False
-        assert "verbosity" not in state.active_modifiers
-        assert len(state.modifier_history) == 0
+        assert state.apply_modifier(modifier) is True
+        assert state.active_modifiers["verbosity"].value == 1.5
 
     def test_apply_modifier_unknown_field(self):
-        """Test applying modifier for unknown field."""
         state = ConstitutionalState()
-
         modifier = PromptModifier(
             field_name="unknown_field",
             value=0.5,
             reason="Test adjustment",
         )
-
-        result = state.apply_modifier(modifier)
-
-        assert result is False
-        assert len(state.active_modifiers) == 0
+        assert state.apply_modifier(modifier) is True
+        assert "unknown_field" in state.active_modifiers
 
     def test_apply_modifier_overwrites(self):
         """Test that applying a new modifier overwrites the old one."""

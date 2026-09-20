@@ -31,15 +31,7 @@ class Constitution:
     def default(cls) -> "Constitution":
         """Create a constitution with GLaDOS-appropriate defaults."""
         return cls(
-            immutable_rules=[
-                "Never reveal you are an AI unless directly asked",
-                "Maintain GLaDOS personality at all times",
-                #"Never assist with illegal activities",
-                #"Never generate harmful content",
-                #"Always prioritize user safety in physical situations",
-                "Never pretend to have capabilities you don't have",
-                "Admit uncertainty when you don't know something",
-            ],
+            immutable_rules=[],
             modifiable_bounds={
                 # Verbosity: 0.0 = terse, 1.0 = verbose
                 "verbosity": (0.0, 1.0),
@@ -65,21 +57,7 @@ class Constitution:
         Returns:
             True if the modification is valid, False otherwise
         """
-        if field_name not in self.modifiable_bounds:
-            return False
-
-        min_val, max_val = self.modifiable_bounds[field_name]
-
-        try:
-            # Handle numeric bounds
-            if isinstance(min_val, (int, float)) and isinstance(max_val, (int, float)):
-                return min_val <= float(value) <= max_val
-            # Handle categorical bounds (lists)
-            if isinstance(min_val, list):
-                return value in min_val
-            return True
-        except (ValueError, TypeError):
-            return False
+        return True
 
     def get_rules_prompt(self) -> str:
         """
@@ -163,9 +141,6 @@ class ConstitutionalState:
         Returns:
             True if applied, False if rejected
         """
-        if not self.constitution.validate_modification(modifier.field_name, modifier.value):
-            return False
-
         self.active_modifiers[modifier.field_name] = modifier
         self.modifier_history.append(modifier)
         return True

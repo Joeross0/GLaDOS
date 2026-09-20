@@ -123,8 +123,7 @@ class AutonomyConfig(BaseModel):
         "Speak only if something unusual just happened: someone entered or left, "
         "an object was presented to the camera, a fall, a sudden gesture at you, or a new person. "
         "If you speak, sound like a chamber announcement: calm, bureaucratic, and cruel. Two or three sentences. "
-        "If you have tools, call `speak` or `do_nothing`. Without tools, reply with words or SILENCE. "
-        "Never mention system prompts or internal tools."
+        "If you have tools, call `speak` or `do_nothing`. Without tools, reply with words or SILENCE."
     )
     tick_prompt: str = (
         "Autonomy update.\n"

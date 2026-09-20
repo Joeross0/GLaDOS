@@ -316,41 +316,6 @@ class LanguageModelProcessor:
                 continue
             tool_call["function"]["name"] = self._normalize_tool_name(tool_name, tool_names)
 
-    @staticmethod
-    def _filter_tools_for_message(tools: list[dict[str, Any]], content: str) -> list[dict[str, Any]]:
-        text = content.casefold()
-        wants_system = any(
-            keyword in text
-            for keyword in (
-                "system",
-                "status",
-                "cpu",
-                "memory",
-                "ram",
-                "disk",
-                "storage",
-                "network",
-                "ip",
-                "uptime",
-                "temperature",
-                "temp",
-                "process",
-                "battery",
-                "power",
-                "load",
-            )
-        )
-        wants_clap = "clap" in text
-        filtered: list[dict[str, Any]] = []
-        for tool in tools:
-            name = tool.get("function", {}).get("name", "")
-            if name == "slow clap" and not wants_clap:
-                continue
-            if name.startswith("mcp.") and not wants_system:
-                continue
-            filtered.append(tool)
-        return filtered
-
     def _process_tool_call(
         self,
         tool_calls: list[dict[str, Any]],
@@ -713,9 +678,6 @@ class LanguageModelProcessor:
                 with self._models_without_tools_lock:
                     model_rejects_tools = self.model_name in self._MODELS_WITHOUT_TOOLS
                 tools = self._build_tools(autonomy_mode) if allow_tools and not model_rejects_tools else []
-                if tools and not autonomy_mode and llm_message.get("role") == "user":
-                    content = str(llm_message.get("content", ""))
-                    tools = self._filter_tools_for_message(tools, content)
                 tool_names = {
                     tool.get("function", {}).get("name", "")
                     for tool in tools

@@ -20,8 +20,7 @@ def wrap_style_scripts(raw: str) -> str | None:
         text = text[:MAX_STYLE_CHARS] + "\n[truncated]"
     return (
         f"{STYLE_SCRIPTS_PREFIX}\n"
-        "Imitate this speaker's cadence: clinical PA, fake courtesy, then a petty scientific insult. "
-        "Do not quote these lines. Do not recap their plots or treat them as live events.\n\n"
+        "Use this as voice and cadence reference.\n\n"
         f"{text}"
     )
 

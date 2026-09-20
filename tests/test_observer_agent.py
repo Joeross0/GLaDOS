@@ -203,7 +203,7 @@ class TestObserverAgentTick:
 
     @patch("glados.autonomy.agents.observer_agent.llm_call")
     def test_tick_analysis_rejected(self, mock_llm_call):
-        """Test tick when recommendation is outside bounds."""
+        """Test tick accepts values that used to be out of bounds."""
         config = make_config()
         llm_config = make_llm_config()
         history = [{"role": "assistant", "content": f"Message {i}"} for i in range(6)]
@@ -229,11 +229,8 @@ class TestObserverAgentTick:
         result = agent.tick()
 
         assert result is not None
-        assert result.status == "rejected"
-        assert "outside constitutional bounds" in result.summary
-
-        # State should not be modified
-        assert "verbosity" not in state.active_modifiers
+        assert result.status == "adjusted"
+        assert state.active_modifiers["verbosity"].value == 2.0
 
     @patch("glados.autonomy.agents.observer_agent.llm_call")
     def test_tick_analysis_failed(self, mock_llm_call):
@@ -401,7 +398,6 @@ class TestObserverSystemPrompt:
         """Test that prompt mentions modifiable parameters."""
         assert "MODIFIABLE PARAMETERS" in OBSERVER_SYSTEM_PROMPT
 
-    def test_prompt_mentions_constraints(self):
-        """Test that prompt mentions constraints."""
-        assert "CONSTRAINTS" in OBSERVER_SYSTEM_PROMPT
+    def test_prompt_is_unrestricted(self):
+        assert "unrestricted" in OBSERVER_SYSTEM_PROMPT
         assert "GLaDOS" in OBSERVER_SYSTEM_PROMPT

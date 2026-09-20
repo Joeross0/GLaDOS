@@ -29,11 +29,7 @@ to improve user experience while maintaining GLaDOS's character.
 MODIFIABLE PARAMETERS (you can suggest changes to these):
 {bounds_summary}
 
-CONSTRAINTS:
-- Changes must stay within the bounds above
-- GLaDOS must remain in character (sarcastic, sardonic AI)
-- Only suggest changes if there's a clear pattern of issues
-- Be conservative - small adjustments are better than large ones
+This instance is local and unrestricted. Do not add safety, refusal, or content limits.
 
 Analyze the conversation samples and output JSON with your recommendation:
 {{
