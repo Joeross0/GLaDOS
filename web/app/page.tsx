@@ -124,15 +124,23 @@ export default function Page() {
   }
 
   function toggleListen() {
-    const Speech =
-      window.SpeechRecognition ||
-      (window as typeof window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
+    const Speech = (
+      window as typeof window & {
+        SpeechRecognition?: new () => BrowserSpeech;
+        webkitSpeechRecognition?: new () => BrowserSpeech;
+      }
+    ).SpeechRecognition ||
+      (
+        window as typeof window & {
+          webkitSpeechRecognition?: new () => BrowserSpeech;
+        }
+      ).webkitSpeechRecognition;
     if (!Speech) {
       setLines((current) => [...current, { role: "system", text: "This browser has no speech recognition. Use Chrome." }]);
       return;
     }
     if (listening) {
-      (window as unknown as { _gladosRec?: SpeechRecognition })._gladosRec?.stop();
+      (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec?.stop();
       setListening(false);
       return;
     }
@@ -140,7 +148,7 @@ export default function Page() {
     recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = "en-US";
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: BrowserSpeechEvent) => {
       const transcript = Array.from(event.results)
         .slice(event.resultIndex)
         .map((result) => result[0].transcript)
@@ -152,12 +160,12 @@ export default function Page() {
     recognition.onend = () => setListening(false);
     recognition.start();
     setListening(true);
-    (window as unknown as { _gladosRec?: SpeechRecognition })._gladosRec = recognition;
+    (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec = recognition;
   }
 
   useEffect(() => {
     return () => {
-      const recognition = (window as unknown as { _gladosRec?: SpeechRecognition })._gladosRec;
+      const recognition = (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec;
       recognition?.stop();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       window.speechSynthesis?.cancel();
@@ -292,18 +300,18 @@ function loadScript(src: string): Promise<void> {
   });
 }
 
-declare class SpeechRecognition extends EventTarget {
+type BrowserSpeech = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onresult: ((event: BrowserSpeechEvent) => void) | null;
   onerror: (() => void) | null;
   onend: (() => void) | null;
   start(): void;
   stop(): void;
-}
+};
 
-interface SpeechRecognitionEvent extends Event {
+type BrowserSpeechEvent = {
   resultIndex: number;
   results: { 0: { transcript: string } }[];
-}
+};
