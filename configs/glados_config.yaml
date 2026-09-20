@@ -1,6 +1,6 @@
 Glados:
-  llm_model: "dolphin-llama3:8b"
-  completion_url: "http://localhost:11434/api/chat"
+  llm_model: "glados-lora"
+  completion_url: "http://127.0.0.1:11435/v1/chat/completions"
   api_key: null  # Add your API key here if needed!
   interruptible: true
   audio_io: "sounddevice"
