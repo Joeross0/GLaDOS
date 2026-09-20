@@ -53,7 +53,7 @@ class SpeechListener:
         asr_model: TranscriberProtocol,
         wake_word: str | None,
         pause_time: float,
-        interruptible: bool = True,
+        interruptible: bool = False,
         interaction_state: "InteractionState | None" = None,
         observability_bus: ObservabilityBus | None = None,
         asr_muted_event: threading.Event | None = None,

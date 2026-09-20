@@ -2,7 +2,7 @@ Glados:
   llm_model: "glados-lora"
   completion_url: "http://127.0.0.1:11435/v1/chat/completions"
   api_key: null  # Add your API key here if needed!
-  interruptible: true
+  interruptible: false
   audio_io: "sounddevice"
   audio_io_options:
     input_device: null

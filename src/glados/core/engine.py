@@ -247,7 +247,7 @@ class Glados:
         completion_url: HttpUrl,
         llm_model: str,
         api_key: str | None = None,
-        interruptible: bool = True,
+        interruptible: bool = False,
         wake_word: str | None = None,
         announcement: str | None = None,
         personality_preprompt: tuple[dict[str, str], ...] = DEFAULT_PERSONALITY_PREPROMPT,
