@@ -36,6 +36,11 @@ class VisionConfig(BaseModel):
         le=1.0,
         description="Minimum normalized difference between frames to trigger VLM inference. 0=always process, 1=never process.",
     )
+    force_refresh_seconds: float = Field(
+        default=15.0,
+        ge=0.0,
+        description="Re-run the VLM at least this often even if the scene looks still. 0=only on change.",
+    )
     max_tokens: int = Field(
         default=64,
         gt=0,

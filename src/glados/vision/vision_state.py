@@ -21,6 +21,11 @@ class VisionState:
             self._change_score = change_score
             self._updated_at = time.time()
 
+    def note_scan(self, change_score: float) -> None:
+        """Refresh the live change score without claiming a new caption."""
+        with self._lock:
+            self._change_score = change_score
+
     def snapshot(self) -> str | None:
         """Return the latest vision description, if available."""
         with self._lock:

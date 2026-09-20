@@ -64,6 +64,7 @@ class VisionProcessor:
         self._last_features: NDArray[np.float32] | None = None
         self._prompt_cache: dict[tuple[str, int], str] = {}
         self._last_description: str | None = None
+        self._last_snapshot_ts: float = 0.0
 
     def run(self) -> None:
         """Main processing loop for the vision processor thread."""
@@ -89,10 +90,17 @@ class VisionProcessor:
                 processed = self._preprocess_frame(frame)
 
                 change_score = self._scene_change_score(processed)
-
-                # Skip if scene hasn't changed significantly
-                if self._last_frame is not None and change_score <= self.config.scene_change_threshold:
-                    logger.debug("VisionProcessor: Scene unchanged, skipping VLM inference.")
+                stale = (
+                    self.config.force_refresh_seconds > 0
+                    and (time.time() - self._last_snapshot_ts) >= self.config.force_refresh_seconds
+                )
+                if (
+                    self._last_frame is not None
+                    and change_score <= self.config.scene_change_threshold
+                    and not stale
+                ):
+                    self.vision_state.note_scan(change_score)
+                    logger.debug("VisionProcessor: Scene unchanged ({:.3f}), skipping VLM.", change_score)
                     self._sleep(loop_started)
                     continue
 
@@ -105,6 +113,7 @@ class VisionProcessor:
 
                 if description:
                     self.vision_state.update(description, change_score=change_score)
+                    self._last_snapshot_ts = time.time()
                     logger.success("Vision snapshot updated: {}", description)
                     self._publish_update(description, change_score)
                     self._last_description = description
