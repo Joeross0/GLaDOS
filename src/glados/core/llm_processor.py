@@ -22,6 +22,7 @@ from ..mcp import MCPManager
 from ..observability import ObservabilityBus, trim_message
 from ..tools import tool_definitions
 from ..vision.vision_state import VisionState
+from .spoken_echo import is_similar_utterance
 
 class LanguageModelProcessor:
     """
@@ -32,6 +33,8 @@ class LanguageModelProcessor:
     """
 
     PUNCTUATION_SET: ClassVar[set[str]] = {".", "!", "?", ":", ";", "?!", "\n", "\n\n"}
+    _MODELS_WITHOUT_TOOLS: ClassVar[set[str]] = set()
+    _models_without_tools_lock: ClassVar[threading.Lock] = threading.Lock()
 
     # Standard thinking tags (GLM-4.7, MiniMax M2.7/M3, DeepSeek, etc.)
     THINKING_OPEN_TAGS: ClassVar[tuple[str, ...]] = ("<think>", "<thinking>", "<reasoning>")
@@ -89,6 +92,7 @@ class LanguageModelProcessor:
         self._lane = lane
         self._inflight_counter = inflight_counter
         self._ollama_mode = self._is_ollama_endpoint()
+        self._spoken_this_turn: list[str] = []
 
         self.prompt_headers = {"Content-Type": "application/json"}
         if api_key:
@@ -397,8 +401,22 @@ class LanguageModelProcessor:
         sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace("  ", " ").replace(":", " ")
 
         if sentence and sentence != ".":  # Avoid sending just a period
+            if self._is_repetitive_sentence(sentence):
+                logger.info("LLM Processor: Dropping repeated sentence: '{}'", sentence)
+                return
             logger.info(f"LLM Processor: Sending to TTS queue: '{sentence}'")
             self.tts_input_queue.put(sentence)
+            self._spoken_this_turn.append(sentence)
+
+    def _is_repetitive_sentence(self, sentence: str) -> bool:
+        recent: list[str] = list(getattr(self, "_spoken_this_turn", []))
+        for message in reversed(self._conversation_store.snapshot()):
+            if message.get("role") != "assistant":
+                continue
+            recent.append(str(message.get("content", "")))
+            if len(recent) >= 8:
+                break
+        return any(is_similar_utterance(sentence, previous) for previous in recent)
 
     def _extract_thinking(
         self,
@@ -682,8 +700,11 @@ class LanguageModelProcessor:
                     inflight_guard = False
                 self._conversation_store.append(llm_message)
 
+                self._spoken_this_turn = []
                 allow_tools = bool(llm_input.get("_allow_tools", True))
-                tools = self._build_tools(autonomy_mode) if allow_tools else []
+                with self._models_without_tools_lock:
+                    model_rejects_tools = self.model_name in self._MODELS_WITHOUT_TOOLS
+                tools = self._build_tools(autonomy_mode) if allow_tools and not model_rejects_tools else []
                 if tools and not autonomy_mode and llm_message.get("role") == "user":
                     content = str(llm_message.get("content", ""))
                     tools = self._filter_tools_for_message(tools, content)
@@ -796,6 +817,8 @@ class LanguageModelProcessor:
                                     "LLM Processor: {} does not support tools; retrying without them.",
                                     self.model_name,
                                 )
+                                with self._models_without_tools_lock:
+                                    self._MODELS_WITHOUT_TOOLS.add(self.model_name)
                                 data.pop("tools", None)
                                 tools = []
                                 tool_names = set()

@@ -21,6 +21,7 @@ from typing import Callable
 from ..ASR import TranscriberProtocol
 from ..audio_io import AudioProtocol
 from .audio_state import AudioState
+from .spoken_echo import SpokenTranscriptFilter
 from ..observability import ObservabilityBus, trim_message
 
 # Callback signature: (event_type: str) -> None
@@ -58,6 +59,7 @@ class SpeechListener:
         asr_muted_event: threading.Event | None = None,
         audio_state: AudioState | None = None,
         on_interrupt: InterruptCallback | None = None,
+        echo_filter: SpokenTranscriptFilter | None = None,
     ) -> None:
         """
         Initializes the SpeechListener with audio I/O, inter-thread communication, and ASR model.
@@ -96,6 +98,7 @@ class SpeechListener:
         self._asr_muted_event = asr_muted_event
         self._audio_state = audio_state
         self._on_interrupt = on_interrupt
+        self._echo_filter = echo_filter or SpokenTranscriptFilter()
 
     def run(self) -> None:
         """
@@ -181,6 +184,9 @@ class SpeechListener:
         self._buffer.append(sample)  # Automatically handles overflow
 
         if vad_confidence:
+            if self._echo_filter.should_ignore_listening():
+                logger.debug("Ignoring microphone activity while GLaDOS is still speaking.")
+                return
             if not self.interruptible and self.currently_speaking_event.is_set():
                 logger.debug(f"Detected voice activity but interruptibility is disabled: {self.interruptible=}, {self.currently_speaking_event.is_set()=}")
                 return
@@ -279,6 +285,10 @@ class SpeechListener:
 
         if detected_text:
             logger.success(f"ASR text: '{detected_text}'")
+            if self._echo_filter.is_echo(detected_text):
+                logger.info("Ignoring ASR that matches recent GLaDOS speech: '{}'", detected_text)
+                self.reset()
+                return
 
             if self.wake_word and not self._wakeword_detected(detected_text):
                 logger.info(f"Required wake word {self.wake_word=} not detected.")

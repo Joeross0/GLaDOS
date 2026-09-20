@@ -10,6 +10,7 @@ from ..audio_io import AudioProtocol
 from ..observability import ObservabilityBus, trim_message
 from .audio_data import AudioMessage
 from .conversation_store import ConversationStore
+from .spoken_echo import SpokenTranscriptFilter
 
 
 class SpeechPlayer:
@@ -32,6 +33,7 @@ class SpeechPlayer:
         tts_muted_event: threading.Event | None = None,
         interaction_state: "InteractionState | None" = None,
         observability_bus: ObservabilityBus | None = None,
+        echo_filter: SpokenTranscriptFilter | None = None,
     ) -> None:
         self.audio_io = audio_io
         self.audio_output_queue = audio_output_queue
@@ -44,6 +46,7 @@ class SpeechPlayer:
         self._tts_muted_event = tts_muted_event
         self._interaction_state = interaction_state
         self._observability_bus = observability_bus
+        self._echo_filter = echo_filter or SpokenTranscriptFilter()
 
     def run(self) -> None:
         """
@@ -69,6 +72,7 @@ class SpeechPlayer:
                         )
                     assistant_text_accumulator = []
                     self.currently_speaking_event.clear()
+                    self._echo_filter.mark_speaking(False)
                     continue
 
                 if tts_muted:
@@ -93,10 +97,13 @@ class SpeechPlayer:
                     else:
                         logger.warning(f"AudioPlayer: Received empty audio message or no text: {audio_len, audio_msg}")
                     self.currently_speaking_event.clear()
+                    self._echo_filter.mark_speaking(False)
                     continue
 
                 if audio_len and audio_msg.text:  # Ensure there's audio and text
                     self.currently_speaking_event.set()  # We are about to speak
+                    self._echo_filter.mark_speaking(True)
+                    self._echo_filter.remember(audio_msg.text)
                     if self._interaction_state:
                         self._interaction_state.mark_assistant()
                     if self._observability_bus:
@@ -151,8 +158,8 @@ class SpeechPlayer:
                                 kind="finish",
                                 message=trim_message(audio_msg.text),
                             )
-                        
-                    self.currently_speaking_event.clear()
+                    # Stay marked as speaking until EOS so the next sentence is not
+                    # picked up as user speech between clips.
     
                 else:
                     logger.warning(f"AudioPlayer: Received empty audio message or no text: {audio_len, audio_msg}")
@@ -173,6 +180,7 @@ class SpeechPlayer:
 
         logger.debug("AudioPlayer: Clearing audio queue due to interruption.")
         self.currently_speaking_event.clear()
+        self._echo_filter.mark_speaking(False)
         # with self.audio_output_queue.mutex:
         #     self.audio_output_queue.queue.clear()
         try:

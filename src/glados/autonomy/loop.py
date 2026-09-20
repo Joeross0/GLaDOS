@@ -90,6 +90,9 @@ class AutonomyLoop:
     def _should_skip(self) -> bool:
         if self._currently_speaking_event.is_set():
             return True
+        since_assistant = self._interaction_state.seconds_since_assistant()
+        if since_assistant is not None and since_assistant < 15:
+            return True
         if self._config.cooldown_s <= 0:
             return False
         return (time.time() - self._last_prompt_ts) < self._config.cooldown_s

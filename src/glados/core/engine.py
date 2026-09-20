@@ -45,6 +45,7 @@ from .store import Store, format_preferences
 from .llm_tracking import InFlightCounter
 from .speech_listener import SpeechListener
 from .speech_player import SpeechPlayer
+from .spoken_echo import SpokenTranscriptFilter
 from .text_listener import TextListener
 from .tool_executor import ToolExecutor
 from .tts_synthesizer import TextToSpeechSynthesizer
@@ -330,6 +331,7 @@ class Glados:
         # Initialize events for thread synchronization
         self.processing_active_event = threading.Event()  # Indicates if input processing is active (ASR + LLM + TTS + VLM)
         self.currently_speaking_event = threading.Event()  # Indicates if the assistant is currently speaking
+        self.echo_filter = SpokenTranscriptFilter()
         self.shutdown_event = threading.Event()  # Event to signal shutdown of all threads
 
         # Initialize shutdown orchestrator for graceful shutdown
@@ -423,6 +425,7 @@ class Glados:
                 asr_muted_event=self.asr_muted_event,
                 audio_state=self.audio_state,
                 on_interrupt=lambda _: self._push_emotion_event("user", "User interrupted me mid-sentence"),
+                echo_filter=self.echo_filter,
             )
         if self.input_mode in {"text", "both"}:
             if self.input_mode == "text":
@@ -534,6 +537,7 @@ class Glados:
             tts_muted_event=self.tts_muted_event,
             interaction_state=self.interaction_state,
             observability_bus=self.observability_bus,
+            echo_filter=self.echo_filter,
         )
 
         self.vision_processor = None
