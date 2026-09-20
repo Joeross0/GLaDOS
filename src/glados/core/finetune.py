@@ -159,6 +159,10 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
     model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=quant, device_map="auto")
     model = PeftModel.from_pretrained(model, str(ADAPTER_DIR))
     model.eval()
+    model.config.use_cache = True
+    with torch.inference_mode():
+        warm = tokenizer("Ready.", return_tensors="pt").to(model.device)
+        model.generate(**warm, max_new_tokens=1, use_cache=True)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
@@ -187,45 +191,50 @@ def serve_adapter(host: str = "127.0.0.1", port: int = DEFAULT_PORT, model_id: s
                 token_id = tokenizer.convert_tokens_to_ids(name)
                 if isinstance(token_id, int) and token_id not in eos_ids:
                     eos_ids.append(token_id)
-            thread = Thread(
-                target=model.generate,
-                kwargs={
-                    **inputs,
-                    "streamer": streamer,
-                    "max_new_tokens": 120,
-                    "do_sample": True,
-                    "temperature": 0.7,
-                    "repetition_penalty": 1.15,
-                    "eos_token_id": eos_ids,
-                    "pad_token_id": tokenizer.pad_token_id or tokenizer.eos_token_id,
-                },
-                daemon=True,
-            )
+
+            def _generate() -> None:
+                with torch.inference_mode():
+                    model.generate(
+                        **inputs,
+                        streamer=streamer,
+                        max_new_tokens=64,
+                        do_sample=True,
+                        temperature=0.7,
+                        repetition_penalty=1.15,
+                        use_cache=True,
+                        eos_token_id=eos_ids,
+                        pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+                    )
+
+            thread = Thread(target=_generate, daemon=True)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
             thread.start()
             leaked = False
-            for token in streamer:
-                if leaked:
-                    continue
-                lower = token.casefold()
-                if any(mark in lower for mark in ("<|im_start|>", "<|im_end|>", "uservoice", "assistantvoice")):
-                    leaked = True
-                    continue
-                if token.strip().casefold() in {"user", "assistant", "system"}:
-                    leaked = True
-                    continue
-                chunk = json.dumps({"choices": [{"delta": {"content": token}}]})
-                self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
+            try:
+                for token in streamer:
+                    if leaked:
+                        continue
+                    lower = token.casefold()
+                    if any(mark in lower for mark in ("<|im_start|>", "<|im_end|>", "uservoice", "assistantvoice")):
+                        leaked = True
+                        continue
+                    if token.strip().casefold() in {"user", "assistant", "system"}:
+                        leaked = True
+                        continue
+                    chunk = json.dumps({"choices": [{"delta": {"content": token}}]})
+                    self.wfile.write(f"data: {chunk}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+                self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
+            except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+                logger.info("Client dropped the stream.")
             thread.join(timeout=5)
 
-        def log_message(self, format: str, *args: object) -> None:
-            logger.info(format, *args)
+        def log_message(self, fmt: str, *args: object) -> None:
+            logger.info(fmt, *args)
 
     logger.info("Serving fine-tuned GLaDOS at http://{}:{}/v1/chat/completions", host, port)
     logger.info("Point completion_url at that URL and set llm_model to glados-lora.")
