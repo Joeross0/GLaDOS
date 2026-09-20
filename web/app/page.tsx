@@ -7,6 +7,13 @@ type Line = { role: "you" | "glados" | "system"; text: string };
 type Detector = { detect: (video: HTMLVideoElement) => Promise<{ class: string; score: number }[]> };
 
 const SESSION_KEY = "glados-web-session";
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=";
+
+function isAutoplayBlock(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /not allowed by the user agent|NotAllowedError|play\(\)/i.test(message);
+}
 
 function sessionId(): string {
   const existing = sessionStorage.getItem(SESSION_KEY);
@@ -70,11 +77,34 @@ export default function Page() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
+  function ensurePlayer(): HTMLAudioElement {
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.preload = "auto";
+    }
+    return audioRef.current;
+  }
+
+  function unlockAudio() {
+    const player = ensurePlayer();
+    player.muted = true;
+    player.src = SILENT_WAV;
+    void player
+      .play()
+      .then(() => {
+        player.pause();
+        player.muted = false;
+      })
+      .catch(() => {
+        player.muted = false;
+      });
+  }
+
   function stopSpeech() {
     turnRef.current += 1;
-    audioRef.current?.pause();
-    if (audioRef.current?.src.startsWith("blob:")) URL.revokeObjectURL(audioRef.current.src);
-    audioRef.current = null;
+    const player = audioRef.current;
+    player?.pause();
+    if (player?.src.startsWith("blob:")) URL.revokeObjectURL(player.src);
     setThinking(false);
   }
 
@@ -88,11 +118,15 @@ export default function Page() {
     if (!response.ok || turn !== turnRef.current) return false;
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
-    audioRef.current?.pause();
-    if (audioRef.current?.src.startsWith("blob:")) URL.revokeObjectURL(audioRef.current.src);
-    const player = new Audio(url);
-    audioRef.current = player;
-    await player.play();
+    const player = ensurePlayer();
+    if (player.src.startsWith("blob:")) URL.revokeObjectURL(player.src);
+    player.src = url;
+    player.muted = false;
+    try {
+      await player.play();
+    } catch {
+      return turn === turnRef.current;
+    }
     await new Promise<void>((resolve) => {
       const finish = () => {
         window.clearInterval(tick);
@@ -171,10 +205,12 @@ export default function Page() {
           }
         }
       } catch (error) {
-        setLines((current) => [
-          ...current,
-          { role: "system", text: error instanceof Error ? error.message : "Request failed." },
-        ]);
+        if (!isAutoplayBlock(error)) {
+          setLines((current) => [
+            ...current,
+            { role: "system", text: error instanceof Error ? error.message : "Request failed." },
+          ]);
+        }
       } finally {
         if (turn === turnRef.current) {
           setBusy(false);
@@ -192,6 +228,7 @@ export default function Page() {
     event.preventDefault();
     const message = text.trim();
     if (!message) return;
+    unlockAudio();
     setText("");
     await ask(message, false, scene);
   }
@@ -259,15 +296,7 @@ export default function Page() {
       if (transcript) void ask(transcript, false, scene);
     };
     recognition.onerror = (event?: { error?: string }) => {
-      if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
-        setLines((current) => [
-          ...current,
-          {
-            role: "system",
-            text: "This phone blocked speech recognition. Open in Chrome or Safari, allow the microphone, then tap Mic again. In-app browsers usually fail.",
-          },
-        ]);
-      }
+      if (event?.error === "aborted" || event?.error === "no-speech") return;
       stopMic();
     };
     recognition.onend = () => {
@@ -275,29 +304,21 @@ export default function Page() {
         try {
           recognition.start();
         } catch {
-          stopMic();
+          wantListenRef.current = false;
+          setListening(false);
         }
         return;
       }
       if (!wantListenRef.current) stopMic();
     };
     try {
+      unlockAudio();
       wantListenRef.current = true;
       recognition.start();
       setListening(true);
       (window as unknown as { _gladosRec?: BrowserSpeech })._gladosRec = recognition;
-    } catch (error) {
+    } catch {
       stopMic();
-      setLines((current) => [
-        ...current,
-        {
-          role: "system",
-          text:
-            error instanceof Error
-              ? `Mic start failed: ${error.message}`
-              : "Mic start failed on this phone browser.",
-        },
-      ]);
     }
   }
 
