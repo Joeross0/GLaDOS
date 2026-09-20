@@ -14,7 +14,13 @@ def test_extract_skips_wiki_chrome() -> None:
     lines = extract_lines(SAMPLE)
     assert any("enrichment center" in line.lower() for line in lines)
     assert any("kill you" in line.lower() for line in lines)
+    assert any("please be careful" in line.lower() for line in lines)
     assert all("Download" not in line for line in lines)
+
+
+def test_extract_keeps_test_chamber_lines() -> None:
+    lines = extract_lines('"Welcome to test chamber four." | Download Download |  Play\n')
+    assert any("test chamber four" in line.lower() for line in lines)
 
 
 def test_retrieve_prefers_overlap() -> None:

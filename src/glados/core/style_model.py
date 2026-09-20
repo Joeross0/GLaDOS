@@ -19,10 +19,34 @@ SCRIPTS_DIR = Path("data/scripts")
 MODEL_DIR = Path("data/style_model")
 LINES_PATH = MODEL_DIR / "lines.json"
 CARD_PATH = MODEL_DIR / "card.txt"
-QUOTE_RE = re.compile(r'"([^"]{12,500})"')
-NOISE = re.compile(
-    r"(download|play|translated to|see also|if the player|during the level|test chamber)",
+QUOTE_RE = re.compile(r'"([^"]{6,1200})"')
+WIKI_TAIL = re.compile(r"\s*\|.*$", re.IGNORECASE)
+STAGE_DIRECTION = re.compile(
+    r"^(if the player|during the|upon |when the|for further|in order|see also|"
+    r"part \d+|test chambers?|introduction|hub|final battle|these voice|"
+    r"the following|translated to|download|play\b)",
     re.IGNORECASE,
+)
+SASSY_WORDS = frozenset(
+    {
+        "cake",
+        "neurotoxin",
+        "kill",
+        "dead",
+        "surprise",
+        "imbecile",
+        "moron",
+        "fail",
+        "quit",
+        "weight",
+        "incinerator",
+        "heart",
+        "murder",
+        "trap",
+        "stupid",
+        "worthless",
+        "subject",
+    }
 )
 WORD_RE = re.compile(r"[a-z']{3,}")
 
@@ -46,19 +70,27 @@ def collect_source_files() -> list[Path]:
     return files
 
 
+def _clean_quote(raw: str) -> str:
+    cleaned = WIKI_TAIL.sub("", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"\[/?[^\]]+\]", "", cleaned).strip(" \"'")
+    return cleaned
+
+
 def extract_lines(text: str) -> list[str]:
     lines: list[str] = []
     seen: set[str] = set()
-    for match in QUOTE_RE.findall(text):
-        cleaned = re.sub(r"\s+", " ", match).strip()
-        cleaned = re.sub(r"\[/?[^\]]+\]", "", cleaned).strip()
-        if len(cleaned) < 16 or NOISE.search(cleaned):
-            continue
-        key = cleaned.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        lines.append(cleaned)
+    for raw_line in text.splitlines():
+        stripped = WIKI_TAIL.sub("", raw_line).strip()
+        for match in QUOTE_RE.findall(stripped or raw_line):
+            cleaned = _clean_quote(match)
+            if len(cleaned) < 8 or STAGE_DIRECTION.match(cleaned):
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(cleaned)
     return lines
 
 
@@ -76,7 +108,8 @@ def retrieve_lines(query: str, lines: list[str], limit: int = 5) -> list[str]:
         if not words:
             continue
         overlap = len(query_words & words)
-        score = overlap / (len(query_words) ** 0.5)
+        sass = len(words & SASSY_WORDS) * 0.35
+        score = (overlap / (len(query_words) ** 0.5)) + sass
         if score <= 0:
             continue
         scored.append((score, line))
@@ -93,15 +126,16 @@ def retrieve_lines(query: str, lines: list[str], limit: int = 5) -> list[str]:
 
 def build_card(lines: list[str]) -> str:
     samples = retrieve_lines(
-        "welcome test science facility protocol cake safety chamber subject",
+        "cake neurotoxin kill surprise fail quit imbecile weight heart incinerator subject",
         lines,
-        limit=8,
+        limit=10,
     )
     sample_block = "\n".join(f"- {line}" for line in samples)
     return (
         f"{STYLE_MODEL_PREFIX} {len(lines)} local announcement lines.\n"
-        "Write like these lines: calm PA, fake courtesy, then a petty scientific insult. "
-        "These are voice weights, not live events. Do not recap the whole corpus.\n"
+        "Be sassier than a helpdesk. Calm PA voice, then petty, personal, and mean. "
+        "Fake courtesy is only there so you can snatch it back. Mock the human. "
+        "These are voice weights, not live events.\n"
         f"{sample_block}"
     )
 
@@ -111,7 +145,7 @@ class StyleModel:
     lines: list[str]
     card: str
 
-    def examples_for(self, query: str, limit: int = 5) -> str | None:
+    def examples_for(self, query: str, limit: int = 8) -> str | None:
         if not self.lines:
             return None
         picks = retrieve_lines(query, self.lines, limit=limit)

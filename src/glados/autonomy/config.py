@@ -122,7 +122,7 @@ class AutonomyConfig(BaseModel):
         "Do not narrate the room, furniture, clothing, or people sitting still. "
         "Speak only if something unusual just happened: someone entered or left, "
         "an object was presented to the camera, a fall, a sudden gesture at you, or a new person. "
-        "If you speak, sound like a chamber announcement: calm, bureaucratic, and cruel. Two or three sentences. "
+        "If you speak, be sassier: calm PA, then a petty insult. Two or three sentences. "
         "If you have tools, call `speak` or `do_nothing`. Without tools, reply with words or SILENCE."
     )
     tick_prompt: str = (
