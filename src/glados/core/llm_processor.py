@@ -23,6 +23,7 @@ from ..observability import ObservabilityBus, PerformanceStats, trim_message
 from ..tools import tool_definitions
 from ..vision.vision_state import VisionState
 from .spoken_echo import is_similar_utterance
+from .text_clean import collapse_spaced_letters
 
 class LanguageModelProcessor:
     """
@@ -401,16 +402,15 @@ class LanguageModelProcessor:
         """
         sentence = "".join(current_sentence_parts)
         sentence = re.sub(r"\*.*?\*|\(.*?\)", "", sentence)
+        sentence = collapse_spaced_letters(sentence)
         sentence = sentence.replace("\n\n", ". ").replace("\n", ". ").replace(":", ".")
         sentence = re.sub(r"(?<=[.!?])(?=[A-Za-z])", " ", sentence)
-        sentence = re.sub(
-            r"\b(?:[A-Za-z]\s+){2,}[A-Za-z]\b",
-            lambda match: match.group(0).replace(" ", ""),
-            sentence,
-        )
+        sentence = collapse_spaced_letters(sentence)
         sentence = re.sub(r" {2,}", " ", sentence).strip()
 
         for piece in self._split_spoken_sentences(sentence):
+            if re.fullmatch(r"[A-Za-z][.!?]?", piece):
+                continue
             if self._is_silence_reply(piece):
                 logger.info("LLM Processor: Staying silent.")
                 self._end_thinking()
