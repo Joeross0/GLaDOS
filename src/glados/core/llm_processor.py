@@ -71,6 +71,7 @@ class LanguageModelProcessor:
         lane: str = "priority",
         inflight_counter: InFlightCounter | None = None,
         thinking_event: threading.Event | None = None,
+        style_model_provider: Any | None = None,
     ) -> None:
         self.llm_input_queue = llm_input_queue
         self.tool_calls_queue = tool_calls_queue
@@ -93,6 +94,7 @@ class LanguageModelProcessor:
         self._lane = lane
         self._inflight_counter = inflight_counter
         self.thinking_event = thinking_event
+        self._style_model_provider = style_model_provider
         self._ollama_mode = self._is_ollama_endpoint()
         self._spoken_this_turn: list[str] = []
 
@@ -603,6 +605,18 @@ class LanguageModelProcessor:
             vision_message = self.vision_state.as_message()
             if vision_message:
                 extra_messages.append(vision_message)
+
+        if not autonomy_mode and self._style_model_provider:
+            style_model = self._style_model_provider()
+            if style_model:
+                query = ""
+                for message in reversed(messages):
+                    if message.get("role") == "user":
+                        query = str(message.get("content", ""))
+                        break
+                examples = style_model.examples_for(query)
+                if examples:
+                    extra_messages.append({"role": "system", "content": examples})
 
         if extra_messages:
             insert_index = 0

@@ -46,12 +46,18 @@ from .llm_tracking import InFlightCounter
 from .speech_listener import SpeechListener
 from .speech_player import SpeechPlayer
 from .spoken_echo import SpokenTranscriptFilter
+from .style_model import (
+    STYLE_MODEL_PREFIX,
+    StyleModel,
+    load_style_model,
+    sources_newer_than_model,
+    train_style_model,
+)
 from .style_scripts import (
     STYLE_SCRIPTS_PREFIX,
     load_style_scripts,
     open_style_scripts_in_editor,
     save_style_scripts,
-    wrap_style_scripts,
 )
 from .text_listener import TextListener
 from .tool_executor import ToolExecutor
@@ -399,6 +405,7 @@ class Glados:
                     [{"role": "system", "content": SYSTEM_PROMPT_VISION_HANDLING}] + current_messages
                 )
 
+        self.style_model: StyleModel | None = None
         self.reload_style_scripts()
 
         # Initialize spoken text converter, that converts text to spoken text. eg. 12 -> "twelve"
@@ -489,6 +496,7 @@ class Glados:
             extra_headers=llm_headers,
             lane="priority",
             thinking_event=self.thinking_event,
+            style_model_provider=lambda: self.style_model,
         )
         self.autonomy_llm_processors: list[LanguageModelProcessor] = []
         autonomy_parallel_calls = 0
@@ -518,6 +526,7 @@ class Glados:
                     extra_headers=llm_headers,
                     lane="autonomy",
                     inflight_counter=self._autonomy_inflight,
+                    style_model_provider=lambda: self.style_model,
                 )
             )
 
@@ -1116,12 +1125,20 @@ class Glados:
         return self.reload_style_scripts()
 
     def reload_style_scripts(self) -> str:
-        raw = load_style_scripts()
-        wrapped = wrap_style_scripts(raw)
-        self._conversation_store.upsert_system_by_prefix(STYLE_SCRIPTS_PREFIX, wrapped)
-        if not wrapped:
-            return "Style scripts cleared."
-        return f"Style scripts loaded ({len(raw.strip())} characters)."
+        return self.train_style_model(force=sources_newer_than_model())
+
+    def train_style_model(self, force: bool = True) -> str:
+        if force or sources_newer_than_model() or load_style_model() is None:
+            self.style_model = train_style_model()
+        else:
+            self.style_model = load_style_model()
+        self._conversation_store.upsert_system_by_prefix(STYLE_SCRIPTS_PREFIX, None)
+        card = self.style_model.card if self.style_model and self.style_model.lines else None
+        self._conversation_store.upsert_system_by_prefix(STYLE_MODEL_PREFIX, card)
+        count = len(self.style_model.lines) if self.style_model else 0
+        if count == 0:
+            return "No script lines found. Add quoted announcements to data/scripts or style_scripts.txt."
+        return f"Trained on {count} announcement lines. Matching examples load per turn."
 
     def open_style_scripts(self):
         return open_style_scripts_in_editor()

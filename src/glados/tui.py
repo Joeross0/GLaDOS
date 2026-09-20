@@ -82,6 +82,7 @@ class GladosCommands(Provider):
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
             ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
+            ("Train", "Train voice from local scripts", partial(app.action_train_scripts)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -124,6 +125,7 @@ class GladosCommands(Provider):
             ("Theme", "Switch TUI theme", partial(app.action_theme_picker)),
             ("Microphone", "Choose input microphone", partial(app.action_mic_picker)),
             ("Scripts", "Open style-scripts.txt in the editor", partial(app.action_scripts)),
+            ("Train", "Train voice from local scripts", partial(app.action_train_scripts)),
             ("Context", "Show autonomy slot context", partial(app.action_context)),
             ("Messages", "Show dialog history", partial(app.action_messages)),
             ("Observability", "Open observability screen", partial(app.action_observability)),
@@ -1137,6 +1139,7 @@ class GladosUI(App[None]):
             yield Button("Mic: System default", id="mic_button")
             yield Button("Interrupt: ON", id="interrupt_button")
             yield Button("Scripts", id="scripts_button")
+            yield Button("Train", id="train_button")
             yield Input(
                 placeholder="Type a message...",
                 id="command_input",
@@ -1270,7 +1273,16 @@ class GladosUI(App[None]):
             self._style_scripts_mtime = path.stat().st_mtime
         except OSError:
             self._style_scripts_mtime = None
-        self.notify(f"Opened {path}. Save in the editor to load.", title="Style Scripts", timeout=4)
+        self.notify(f"Opened {path}. Save, then Train.", title="Style Scripts", timeout=4)
+
+    def action_train_scripts(self) -> None:
+        engine = self.glados_engine_instance
+        if not engine:
+            self.notify("Engine not ready.", severity="warning")
+            return
+        response = engine.train_style_model(force=True)
+        logger.success("Style train: {}", response)
+        self.notify(response, title="Train", timeout=6)
 
     def _reload_style_scripts_if_changed(self) -> None:
         engine = self.glados_engine_instance
@@ -1370,6 +1382,9 @@ class GladosUI(App[None]):
             return
         if event.button.id == "scripts_button":
             self.action_scripts()
+            return
+        if event.button.id == "train_button":
+            self.action_train_scripts()
 
     def action_change_theme(self) -> None:
         """Override Textual's default theme picker with our custom themes."""
